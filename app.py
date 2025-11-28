@@ -4,6 +4,26 @@ import pandas as pd
 import streamlit as st
 
 
+'''
+
+## 二、建立 GitHub repository 並 push
+
+### 1. 在 GitHub 建一個新的 repo
+
+1. 登入 GitHub  
+2. 點右上角 **「+」 → New repository**  
+3. 設定：
+   - Repository name: `flower-ownership-app`（或你喜歡的）
+   - Description: 隨便寫，例如 `Streamlit dashboard for flower ownership stats`
+   - Public  
+4. Create repository
+
+建立後 GitHub 會給你一個網址，比如：
+
+```text
+https://github.com/你的帳號/flower-ownership-app.git
+'''
+
 # =========================================================
 # ✅ 固定資料來源 + 固定欄位（朋友不用再填）
 # =========================================================
@@ -391,7 +411,7 @@ def page_multi_compare(df, owner_cols):
         st.dataframe(comp_df, use_container_width=True)
 
 def page_pair_diff(df, items_with_counts, owner_cols):
-    st.subheader("🔍 兩人差異比較（各自擁有但對方沒有的花）")
+    st.subheader("🔍 兩人差異比較（各自擁有但對方沒有的花 & 兩人都沒有的花）")
 
     all_names = get_all_names(df, owner_cols)
 
@@ -427,14 +447,20 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
     only_a_mask = has_a & ~has_b
     only_b_mask = has_b & ~has_a
+    neither_mask = ~has_a & ~has_b   # ✅ 兩人都沒有的花
 
-    # 取出 A/B 各自獨有的花（用 items_with_counts 拿 owners/owner_count）
     base_cols = DESC_COLS + ["owner_count", "owners"]
+
     df_only_a = items_with_counts.loc[only_a_mask, base_cols].copy()
     df_only_b = items_with_counts.loc[only_b_mask, base_cols].copy()
+    df_neither = items_with_counts.loc[neither_mask, base_cols].copy()
 
-    # 關鍵字搜尋（套在 A、B 兩邊）
-    kw = st.text_input("🔍 搜尋關鍵字（品 / 花名 / 獲得方式 / 備註）", value="", key="pair_kw")
+    # 關鍵字搜尋（套在三邊）
+    kw = st.text_input(
+        "🔍 搜尋關鍵字（品 / 花名 / 獲得方式 / 備註）",
+        value="",
+        key="pair_kw"
+    )
 
     def filter_by_kw(d: pd.DataFrame, kw: str):
         if not kw.strip():
@@ -447,13 +473,16 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
     df_only_a = filter_by_kw(df_only_a, kw)
     df_only_b = filter_by_kw(df_only_b, kw)
+    df_neither = filter_by_kw(df_neither, kw)
 
-    # 顯示統計數字
-    c_stat_a, c_stat_b = st.columns(2)
+    # 顯示統計數字：A 獨有、B 獨有、兩人都沒有
+    c_stat_a, c_stat_b, c_stat_n = st.columns(3)
     with c_stat_a:
         st.metric(f"{person_a} 獨有花種數", len(df_only_a))
     with c_stat_b:
         st.metric(f"{person_b} 獨有花種數", len(df_only_b))
+    with c_stat_n:
+        st.metric("兩人都沒有的花種數", len(df_neither))
 
     st.markdown("---")
 
@@ -501,6 +530,30 @@ def page_pair_diff(df, items_with_counts, owner_cols):
             ).reset_index(drop=True)
 
             st.dataframe(df_show_b, use_container_width=True)
+
+    # 底下新增「兩人都沒有的花」
+    st.markdown("---")
+    st.markdown("### 🌱 兩人都沒有的花")
+
+    if df_neither.empty:
+        st.info("目前沒有任何兩人都沒有的花（或是被關鍵字篩掉了）。")
+    else:
+        sort_col_n = st.selectbox(
+            "兩人都沒有的花 - 排序欄位",
+            options=base_cols,
+            index=base_cols.index("花名") if "花名" in base_cols else 0,
+            key="pair_sortN",
+        )
+        asc_n = st.toggle("升冪排序（小→大）", value=True, key="pair_ascN")
+
+        df_show_n = df_neither.sort_values(
+            by=sort_col_n,
+            ascending=asc_n,
+            kind="mergesort",
+        ).reset_index(drop=True)
+
+        st.dataframe(df_show_n, use_container_width=True)
+
 
 # ---------- 主程式 ----------
 st.set_page_config(page_title="物品擁有統計工具", layout="wide")
