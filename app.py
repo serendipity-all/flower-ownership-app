@@ -352,7 +352,7 @@ def page_item_owner_counts(items_with_counts):
 
 
 def page_person_stats(df, owner_cols):
-    st.subheader("🌹 指定人員擁有統計")
+    st.subheader("🌹 個人花圃")
 
     all_names = get_all_names(df, owner_cols)
     person_name = st.selectbox("選擇人員", [""] + all_names)
@@ -371,11 +371,11 @@ def page_person_stats(df, owner_cols):
     c2.metric("擁有種類數", type_count)
 
     # 🔁 第二個 tab 改成「我需要的酷東西」
-    tab1, tab2 = st.tabs(["🌼 擁有的物品清單", "🌺 我需要的酷東西"])
+    tab1, tab2 = st.tabs(["🌼 這個花農有...", "🌺 可以考慮再來點..."])
 
     # ---------- Tab 1：已擁有清單 ----------
     with tab1:
-        st.subheader("🌼 擁有的物品清單")
+        st.subheader("🌼 個人花名冊")
         kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
         owned_df_show = owned_df.copy()
 
@@ -408,7 +408,7 @@ def page_person_stats(df, owner_cols):
 
     # ---------- Tab 2：我需要的酷東西（還沒拿到的花） ----------
     with tab2:
-        st.subheader("🌺 我還沒有拿到的花")
+        st.subheader("🌺 待領取花名冊")
 
         # 先算出這個人「沒有」的那幾朵花
         owner_df = df[owner_cols]
@@ -525,7 +525,7 @@ def page_multi_compare(df, owner_cols):
 
 
 def page_pair_diff(df, items_with_counts, owner_cols):
-    st.subheader("💐 兩人差異比較（各自擁有 & 兩人都沒有的花）")
+    st.subheader("💐 花貿服務（各自擁有 & 兩人都沒有的花）")
 
     all_names = get_all_names(df, owner_cols)
 
@@ -714,8 +714,8 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 PAGES = {
     "🌺 花名冊": lambda: page_raw_table(df),
     "🌼 每項物品擁有人數": lambda: page_item_owner_counts(items_with_counts),
-    "🌹 指定人員擁有統計": lambda: page_person_stats(df, owner_cols),
-    "💐 兩人差異比較": lambda: page_pair_diff(df, items_with_counts, owner_cols),
+    "🌹 個人花圃": lambda: page_person_stats(df, owner_cols),
+    "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "🌻 多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
 }
 
