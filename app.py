@@ -358,7 +358,7 @@ def page_person_stats(df, owner_cols):
     person_name = st.selectbox("選擇人員", [""] + all_names)
 
     if not person_name:
-        st.info("選一個人就會顯示他的擁有清單與需要的酷東西。")
+        st.info("選一個花農就會顯示他擁有的花花跟待下架的酷東西。")
         return
 
     # 既有：這個人已經擁有的統計
@@ -366,9 +366,10 @@ def page_person_stats(df, owner_cols):
         df, person_name, TYPE_COL, DESC_COLS, OWNER_START_COL
     )
 
-    c1, c2 = st.columns(2)
-    c1.metric("擁有物品總數", total_items)
-    c2.metric("擁有種類數", type_count)
+    # 只看「花名」的種類數（TYPE_COL 現在就是「花名」）
+    c1, _ = st.columns(2)
+    c1.metric("擁有花種數（依花名）", type_count)
+
 
     # 🔁 第二個 tab 改成「我需要的酷東西」
     tab1, tab2 = st.tabs(["🌼 這個花農有...", "🌺 可以考慮再來點..."])
@@ -435,9 +436,8 @@ def page_person_stats(df, owner_cols):
             if miss_total > 0 else 0
         )
 
-        c3, c4 = st.columns(2)
-        c3.metric("還沒拿到的花（筆數）", miss_total)
-        c4.metric("還沒拿到的花（種類數）", miss_type_count)
+        c3, _ = st.columns(2)
+        c3.metric("還沒拿到的花（花種數）", miss_type_count)
 
         kw3 = st.text_input("🔍 搜尋我還沒有拿到的花", value="", key="kw3")
         missing_df_show = missing_df.copy()
@@ -525,149 +525,182 @@ def page_multi_compare(df, owner_cols):
 
 
 def page_pair_diff(df, items_with_counts, owner_cols):
-    st.subheader("💐 花貿服務（各自擁有 & 兩人都沒有的花）")
+    st.subheader("💐 花貿服務")
 
+    # 1️⃣ 選擇要比較的花農（多選）
     all_names = get_all_names(df, owner_cols)
-
-    person_a = st.selectbox("選擇人物 A", [""] + all_names, key="pairA")
-    person_b = st.selectbox("選擇人物 B", [""] + all_names, key="pairB")
-
-    if not person_a or not person_b:
-        st.info("請先選擇兩個人。")
-        return
-
-    if person_a == person_b:
-        st.warning("請選兩個**不同**的人。")
-        return
-
-    cols = list(df.columns)
-    start_idx = cols.index(OWNER_START_COL)
-    owner_cols = cols[start_idx:]
-    owner_df = df[owner_cols]
-
-    # 每 row 的唯一名單清單
-    unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
-
-    has_a = unique_names_series.apply(lambda names: person_a in names)
-    has_b = unique_names_series.apply(lambda names: person_b in names)
-
-    only_a_mask = has_a & ~has_b
-    only_b_mask = has_b & ~has_a
-    neither_mask = ~has_a & ~has_b   # 兩人都沒有的花
-
-    base_cols = DESC_COLS + ["owner_count", "owners"]
-
-    df_only_a = items_with_counts.loc[only_a_mask, base_cols].copy()
-    df_only_b = items_with_counts.loc[only_b_mask, base_cols].copy()
-    df_neither = items_with_counts.loc[neither_mask, base_cols].copy()
-
-    kw = st.text_input(
-        "🔍 搜尋關鍵字（品 / 花名 / 獲得方式 / 備註）",
-        value="",
-        key="pair_kw"
+    selected_people = st.multiselect(
+        "選擇要比較的花農（至少一位）",
+        options=all_names,
+        default=all_names[:3] if len(all_names) >= 3 else all_names,
+        key="flower_trade_people",
     )
 
-    def filter_by_kw(d: pd.DataFrame, kw: str):
-        if not kw.strip():
-            return d
-        kw = kw.strip()
-        mask = pd.Series(False, index=d.index)
-        for col in DESC_COLS:
-            mask |= d[col].astype(str).str.contains(kw, case=False, na=False)
-        return d[mask]
+    if not selected_people:
+        st.info("請先選擇至少一位花農。")
+        return
 
-    df_only_a = filter_by_kw(df_only_a, kw)
-    df_only_b = filter_by_kw(df_only_b, kw)
-    df_neither = filter_by_kw(df_neither, kw)
+    # 2️⃣ 準備「每朵花有哪些人擁有」的資訊
+    cols = list(df.columns)
+    start_idx = cols.index(OWNER_START_COL)
+    owner_cols_all = cols[start_idx:]
+    owner_df = df[owner_cols_all]
 
-    c_stat_a, c_stat_b, c_stat_n = st.columns(3)
-    with c_stat_a:
-        st.metric(f"{person_a} 獨有花種數", len(df_only_a))
-    with c_stat_b:
-        st.metric(f"{person_b} 獨有花種數", len(df_only_b))
-    with c_stat_n:
-        st.metric("兩人都沒有的花種數", len(df_neither))
+    # 每一 row 的唯一名單清單（已 canonical + 去重）
+    unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
 
-    tab_a, tab_b, tab_n = st.tabs([
-        f"🌸 {person_a} 獨有",
-        f"🌼 {person_b} 獨有",
-        "🌱 兩人都沒有"
+    # 建立「花 × 人」布林矩陣：True = 這個人有這朵花
+    bool_mat = pd.DataFrame(
+        {
+            person: unique_names_series.apply(lambda names, p=person: p in names)
+            for person in selected_people
+        }
+    )
+
+    # 3️⃣ 個人擁有花數 + 獨有花統計表
+    summary_rows = []
+    for person in selected_people:
+        col_series = bool_mat[person]          # 這個人在每朵花上的 True/False
+        total_owned = int(col_series.sum())    # 擁有花數（在目前選取的人群中）
+
+        # 「獨有」定義：在這群 selected_people 裡只有這個人有
+        if len(selected_people) > 1:
+            others = [p for p in selected_people if p != person]
+            others_any = bool_mat[others].any(axis=1)
+            unique_mask = col_series & ~others_any
+        else:
+            # 只選一人時，他擁有的花都算「獨有」
+            unique_mask = col_series
+
+        unique_idx = bool_mat.index[unique_mask]
+
+        # 找出這些 row 對應的花名（TYPE_COL，通常是「花名」）
+        if len(unique_idx) > 0:
+            unique_flowers = (
+                df.loc[unique_idx, TYPE_COL]
+                .dropna()
+                .astype(str)
+                .tolist()
+            )
+        else:
+            unique_flowers = []
+
+        # 去重（保留順序）
+        seen = set()
+        unique_flowers_ordered = []
+        for f in unique_flowers:
+            if f not in seen:
+                seen.add(f)
+                unique_flowers_ordered.append(f)
+
+        summary_rows.append(
+            {
+                "花農": person,
+                "擁有花數": total_owned,
+                "獨有花數量": len(unique_flowers_ordered),
+                "獨有花名稱": ", ".join(unique_flowers_ordered),
+            }
+        )
+
+    summary_df = pd.DataFrame(summary_rows)
+
+    # 4️⃣ 依目前選取的花農，把花分成三種情況
+    any_has = bool_mat.any(axis=1)   # 至少一人擁有
+    all_has = bool_mat.all(axis=1)   # 所有人都擁有
+    none_has = ~any_has              # 都沒人擁有
+
+    tab_summary, tab_matrix, tab_none, tab_all = st.tabs([
+        "📊 花數總表",
+        "🌼 目前有的花 × 人員矩陣",
+        "🌱 都沒人擁有的花",
+        "🌻 大家都有的花",
     ])
 
-    with tab_a:
-        st.markdown(f"### 🌸 {person_a} 擁有但 {person_b} 沒有的花")
-        if df_only_a.empty:
-            st.info(f"{person_a} 沒有任何獨有的花（或被搜尋條件排除）。")
+    # -------- Tab 0：花數總表 --------
+    with tab_summary:
+        st.markdown("### 🌸 個人擁有花數總表")
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            height=min(400, 40 + 30 * len(summary_df)),
+        )
+
+    # -------- Tab 1：目前有的花 × 人員矩陣（只顯示「部分人擁有」的花） --------
+    with tab_matrix:
+        st.caption("只顯示在目前選取的花農中，部分人擁有的花（至少一人有、但不是所有人都有）。")
+
+        mixed_mask = any_has & ~all_has
+        rows_idx = bool_mat.index[mixed_mask]
+
+        if len(rows_idx) == 0:
+            st.info("目前沒有任何只由部分人擁有的花（可能是全部都有或全部都沒有）。")
         else:
-            sort_col_a = st.selectbox(
-                f"{person_a} 排序欄位",
-                options=base_cols,
-                index=base_cols.index("花名") if "花名" in base_cols else 0,
-                key="pair_sortA",
-            )
-            asc_a = st.toggle("升冪排序（小→大）", value=True, key="pair_ascA")
+            # 基本資訊欄（品、花名、獲得方式、備註）
+            base_sub = df.loc[rows_idx, DESC_COLS].copy()
 
-            df_show_a = df_only_a.sort_values(
-                by=sort_col_a,
-                ascending=asc_a,
-                kind="mergesort",
-            ).reset_index(drop=True)
+            # 建立「人 × 花」差異矩陣（🟢 / 🟡 / 空白）
+            matrix_data = {}
+            for p in selected_people:
+                col_values = []
+                for idx in rows_idx:
+                    row_flags = {
+                        person: bool_mat.at[idx, person]
+                        for person in selected_people
+                    }
+                    if not row_flags[p]:
+                        col_values.append("")
+                    else:
+                        owners_here = [
+                            person for person, has_it in row_flags.items() if has_it
+                        ]
+                        if len(owners_here) == 1:
+                            col_values.append("🟢")  # 獨有燈號
+                        else:
+                            col_values.append("🟡")  # 共有燈號
+                matrix_data[p] = col_values
 
+            matrix_df = pd.DataFrame(matrix_data, index=rows_idx)
+
+            combined_df = pd.concat([base_sub, matrix_df], axis=1)
+
+            st.caption("🟢 = 在目前選取的花農中，只有該花農擁有；🟡 = 至少有兩位花農共同擁有。")
             st.dataframe(
-                df_with_flower_index(df_show_a),
+                df_with_flower_index(combined_df),
                 use_container_width=True,
-                height=400
+                height=500,
             )
 
-    with tab_b:
-        st.markdown(f"### 🌼 {person_b} 擁有但 {person_a} 沒有的花")
-        if df_only_b.empty:
-            st.info(f"{person_b} 沒有任何獨有的花（或被搜尋條件排除）。")
+    # -------- Tab 2：都沒人擁有的花列表 --------
+    with tab_none:
+        st.caption("在目前選取的花農中，完全沒有任何人擁有的花。")
+        rows_idx = bool_mat.index[none_has]
+
+        if len(rows_idx) == 0:
+            st.info("目前沒有『都沒人擁有』的花。")
         else:
-            sort_col_b = st.selectbox(
-                f"{person_b} 排序欄位",
-                options=base_cols,
-                index=base_cols.index("花名") if "花名" in base_cols else 0,
-                key="pair_sortB",
-            )
-            asc_b = st.toggle("升冪排序（小→大）", value=True, key="pair_ascB")
-
-            df_show_b = df_only_b.sort_values(
-                by=sort_col_b,
-                ascending=asc_b,
-                kind="mergesort",
-            ).reset_index(drop=True)
-
+            base_sub = df.loc[rows_idx, DESC_COLS].copy()
             st.dataframe(
-                df_with_flower_index(df_show_b),
+                df_with_flower_index(base_sub),
                 use_container_width=True,
-                height=400
+                height=500,
             )
 
-    with tab_n:
-        st.markdown("### 🌱 兩人都沒有的花")
-        if df_neither.empty:
-            st.info("目前沒有任何兩人都沒有的花（或是被關鍵字篩掉了）。")
+    # -------- Tab 3：大家都有的花列表 --------
+    with tab_all:
+        st.caption("在目前選取的花農中，所有人都有擁有的花。")
+        rows_idx = bool_mat.index[all_has]
+
+        if len(rows_idx) == 0:
+            st.info("目前沒有任何『大家都有』的花。")
         else:
-            sort_col_n = st.selectbox(
-                "兩人都沒有的花 - 排序欄位",
-                options=base_cols,
-                index=base_cols.index("花名") if "花名" in base_cols else 0,
-                key="pair_sortN",
-            )
-            asc_n = st.toggle("升冪排序（小→大）", value=True, key="pair_ascN")
-
-            df_show_n = df_neither.sort_values(
-                by=sort_col_n,
-                ascending=asc_n,
-                kind="mergesort",
-            ).reset_index(drop=True)
-
+            base_sub = df.loc[rows_idx, DESC_COLS].copy()
             st.dataframe(
-                df_with_flower_index(df_show_n),
+                df_with_flower_index(base_sub),
                 use_container_width=True,
-                height=400
+                height=500,
             )
+
+
 
 
 # ---------- 主程式 ----------
