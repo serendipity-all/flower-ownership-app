@@ -264,9 +264,10 @@ def page_raw_table(df):
 
 
 def page_item_owner_counts(items_with_counts):
-    st.subheader("🌼 每種花擁有人數")
+    st.subheader("🌼 每種花花擁有人數")
 
     METHOD_COL = "獲得方式"
+    GRADE_COL = "品"  # ✅ 新增：品級欄位名稱
 
     # 取得所有出現過的「獲得方式」原始值（去掉空白）
     method_series = (
@@ -289,10 +290,11 @@ def page_item_owner_counts(items_with_counts):
     if level_methods:
         method_options.append(LEVEL_LABEL)
 
-    kw = st.text_input("🔍 搜尋物品（可搜描述關鍵字）", value="")
+    # 🔎 搜尋 + 獲得方式篩選
+    kw = st.text_input("搜尋花花（可使用關鍵字）", value="")
 
     mode = st.selectbox(
-        "獲得方式篩選模式",
+        "獲得方式篩選",
         ["全部", "自訂 (可多選)"],
         index=0,
         help="選『全部』等於所有獲得方式都包含；選『自訂』可勾單項/多項"
@@ -306,13 +308,34 @@ def page_item_owner_counts(items_with_counts):
             default=method_options,
         )
 
+    # ✅ 新增：品級篩選
+    grade_options = []
+    selected_grades = []
+    if GRADE_COL in items_with_counts.columns:
+        grade_series = (
+            items_with_counts[GRADE_COL]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+        grade_options = sorted(set([g for g in grade_series.unique() if g]))
+        if grade_options:
+            selected_grades = st.multiselect(
+                "品級篩選（可多選）",
+                options=grade_options,
+                default=grade_options,
+            )
+
+    # 從完整統計表開始做過濾
     show_df_1 = items_with_counts.copy()
 
+    # 1) 關鍵字搜尋（用 item_desc）
     if kw.strip():
         show_df_1 = show_df_1[
             show_df_1["item_desc"].str.contains(kw, case=False, na=False)
         ]
 
+    # 2) 依獲得方式篩選
     if selected_methods and set(selected_methods) != set(method_options):
         method_clean = (
             show_df_1[METHOD_COL]
@@ -330,18 +353,23 @@ def page_item_owner_counts(items_with_counts):
 
         show_df_1 = show_df_1[mask]
 
+    # 3) 依品級篩選
+    if grade_options and selected_grades and set(selected_grades) != set(grade_options):
+        grade_clean = (
+            show_df_1[GRADE_COL]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+        show_df_1 = show_df_1[grade_clean.isin(selected_grades)]
+
+    # 顯示欄位（不顯示 item_desc）
     display_cols = DESC_COLS + ["owner_count", "owners"]
 
-    sort_col_1 = st.selectbox(
-        "排序欄位",
-        options=display_cols,
-        index=display_cols.index("owner_count"),
-    )
-    asc_1 = st.toggle("升冪排序（小→大）", value=False)
-
+    # ✅ 預設用 owner_count 由少到多排序（不再顯示排序控制）
     show_df_1 = show_df_1.sort_values(
-        by=sort_col_1,
-        ascending=asc_1,
+        by="owner_count",
+        ascending=True,
         kind="mergesort",
     ).reset_index(drop=True)
 
@@ -349,6 +377,7 @@ def page_item_owner_counts(items_with_counts):
         df_with_flower_index(show_df_1[display_cols]),
         use_container_width=True
     )
+
 
 
 def page_person_stats(df, owner_cols):
