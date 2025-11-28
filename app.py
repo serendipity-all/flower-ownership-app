@@ -488,7 +488,7 @@ def page_person_stats(df, owner_cols):
 
 
 def page_multi_compare(df, owner_cols):
-    st.subheader("🌻 多人比較 / 排行")
+    st.subheader("🌻 花農排行榜")
 
     rank_df = all_people_rank(df, owner_cols)
     all_names = get_all_names(df, owner_cols)
@@ -678,7 +678,7 @@ st.set_page_config(
 )
 
 st.title("🌸 花農市場調查局")
-st.caption("🌿 統計每項物品擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
+st.caption("🌿 統計每種花擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
 
 # 載入固定 Google Sheet（重新整理網頁就會重新執行並讀取）
 try:
@@ -713,10 +713,10 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 # 左側功能切換（保留擴充性）
 PAGES = {
     "🌺 花名冊": lambda: page_raw_table(df),
-    "🌼 每項物品擁有人數": lambda: page_item_owner_counts(items_with_counts),
+    "🌼 花花排行榜": lambda: page_item_owner_counts(items_with_counts),
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
-    "🌻 多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
+    "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
 with st.sidebar:
