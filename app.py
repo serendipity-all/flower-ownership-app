@@ -610,8 +610,8 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     none_has = ~any_has              # 都沒人擁有
 
     tab_summary, tab_matrix, tab_none, tab_all = st.tabs([
-        "🌸 花數總表",
-        "🌼 推薦交易列表",
+        "🌸 推薦交易清單",
+        "🌼 交叉對照表",
         "🌱 都沒人擁有的花",
         "🌻 大家都有的花",
     ])
@@ -747,16 +747,16 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 # 左側功能切換（保留擴充性）
 PAGES = {
     "🌺 花名冊": lambda: page_raw_table(df),
-    "🌼 花花排行榜": lambda: page_item_owner_counts(items_with_counts),
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
+    "🌼 名花排行榜": lambda: page_item_owner_counts(items_with_counts),
     "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
 with st.sidebar:
-    st.header("🌷 功能選單")
+    st.header("🌷 調查項目")
     page_label = st.radio(
-        "選擇功能",
+        "",
         options=list(PAGES.keys()),
         index=0,
     )
