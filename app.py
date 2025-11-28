@@ -532,7 +532,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     selected_people = st.multiselect(
         "選擇要比較的花農（至少一位）",
         options=all_names,
-        default=all_names[:3] if len(all_names) >= 3 else all_names,
+        default=[],
         key="flower_trade_people",
     )
 
@@ -749,8 +749,8 @@ PAGES = {
     "🌺 花名冊": lambda: page_raw_table(df),
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
-    "🌼 名花排行榜": lambda: page_item_owner_counts(items_with_counts),
-    "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
+    "🌼 名花榜": lambda: page_item_owner_counts(items_with_counts),
+    # "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
 with st.sidebar:
