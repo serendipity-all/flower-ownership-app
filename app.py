@@ -264,7 +264,7 @@ def page_raw_table(df):
 
 
 def page_item_owner_counts(items_with_counts):
-    st.subheader("🌼 每種花花擁有人數")
+    st.subheader("🌼 每種花擁有人數")
 
     METHOD_COL = "獲得方式"
 
@@ -358,7 +358,7 @@ def page_person_stats(df, owner_cols):
     person_name = st.selectbox("選擇人員", [""] + all_names)
 
     if not person_name:
-        st.info("選一個花農就會顯示他擁有的花花跟待下架的酷東西。")
+        st.info("選一個花農就會顯示他擁有的花跟待下架的酷東西。")
         return
 
     # 既有：這個人已經擁有的統計
@@ -610,8 +610,8 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     none_has = ~any_has              # 都沒人擁有
 
     tab_summary, tab_matrix, tab_none, tab_all = st.tabs([
-        "📊 花數總表",
-        "🌼 目前有的花 × 人員矩陣",
+        "🌸 花數總表",
+        "🌼 推薦交易列表",
         "🌱 都沒人擁有的花",
         "🌻 大家都有的花",
     ])
@@ -663,7 +663,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
             combined_df = pd.concat([base_sub, matrix_df], axis=1)
 
-            st.caption("🟢 = 在目前選取的花農中，只有該花農擁有；🟡 = 至少有兩位花農共同擁有。")
+            st.caption("🟢 = 花農獨有；🟡 = 部分花農共同擁有。")
             st.dataframe(
                 df_with_flower_index(combined_df),
                 use_container_width=True,
@@ -712,6 +712,7 @@ st.set_page_config(
 
 st.title("🌸 花農市場調查局")
 st.caption("🌿 統計每種花擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
+st.caption("🌿 點擊表格欄位名稱可依該欄位進行排序。")
 
 # 載入固定 Google Sheet（重新整理網頁就會重新執行並讀取）
 try:
