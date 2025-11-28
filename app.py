@@ -4,25 +4,7 @@ import pandas as pd
 import streamlit as st
 
 
-'''
 
-## 二、建立 GitHub repository 並 push
-
-### 1. 在 GitHub 建一個新的 repo
-
-1. 登入 GitHub  
-2. 點右上角 **「+」 → New repository**  
-3. 設定：
-   - Repository name: `flower-ownership-app`（或你喜歡的）
-   - Description: 隨便寫，例如 `Streamlit dashboard for flower ownership stats`
-   - Public  
-4. Create repository
-
-建立後 GitHub 會給你一個網址，比如：
-
-```text
-https://github.com/你的帳號/flower-ownership-app.git
-'''
 
 # =========================================================
 # ✅ 固定資料來源 + 固定欄位（朋友不用再填）
