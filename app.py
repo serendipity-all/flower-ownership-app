@@ -1,9 +1,14 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Nov 28 11:32:03 2025
+
+@author: delia_chang
+"""
+
 import re
 import io
 import pandas as pd
 import streamlit as st
-
-
 
 
 # =========================================================
@@ -127,7 +132,10 @@ def person_stats(df, person_name, type_col, desc_cols, owner_start_col):
     owner_cols = cols[start_idx:]
 
     owners_norm = df[owner_cols].applymap(normalize_name)
-    has_person = owners_norm.eq(person_name).any(axis=1)
+    has_person = owners_norm.apply(
+        lambda r: any(person_name in split_names(normalize_name(v)) for v in r),
+        axis=1
+    )
 
     safe_cols = []
     for c in desc_cols + [type_col]:
@@ -155,8 +163,12 @@ def person_stats(df, person_name, type_col, desc_cols, owner_start_col):
 
 def all_people_rank(df, owner_cols):
     owners_norm = df[owner_cols].applymap(normalize_name)
-    flat = owners_norm.values.ravel()
-    flat = [n for n in flat if n]
+    flat = []
+    for v in owners_norm.values.ravel():
+        v = normalize_name(v)
+        if not v:
+            continue
+        flat.extend(split_names(v))
     if not flat:
         return pd.DataFrame(columns=["name", "count"])
     rank = pd.Series(flat).value_counts()
@@ -167,8 +179,13 @@ def all_people_rank(df, owner_cols):
 
 def get_all_names(df, owner_cols):
     owners_norm = df[owner_cols].applymap(normalize_name)
-    names = pd.unique(owners_norm.values.ravel())
-    names = sorted([n for n in names if n])
+    names = []
+    for v in owners_norm.values.ravel():
+        v = normalize_name(v)
+        if not v:
+            continue
+        names.extend(split_names(v))
+    names = sorted(set(names))
     return names
 
 
@@ -176,7 +193,6 @@ def get_all_names(df, owner_cols):
 def page_raw_table(df):
     st.subheader("🧾 原始表格")
     st.dataframe(df, use_container_width=True, height=500)
-
     st.markdown(
         """
         - 此頁顯示 Google Sheet 原始內容。
@@ -212,29 +228,24 @@ def page_item_owner_counts(items_with_counts):
     if level_methods:
         method_options.append(LEVEL_LABEL)
 
-    # 上面一列做「搜尋 + 獲得方式模式選取」
-    col_search, col_method = st.columns([2, 2])
+    # 搜尋 + 獲得方式模式
+    kw = st.text_input("🔍 搜尋物品（可搜描述關鍵字）", value="")
 
-    with col_search:
-        kw = st.text_input("🔍 搜尋物品（可搜描述關鍵字）", value="")
+    mode = st.selectbox(
+        "獲得方式篩選模式",
+        ["全部", "自訂 (可多選)"],
+        index=0,
+        help="選『全部』等於所有獲得方式都包含；選『自訂』可勾單項/多項"
+    )
 
-    with col_method:
-        mode = st.selectbox(
-            "獲得方式篩選模式",
-            ["全部", "自訂 (可多選)"],
-            index=0,  # 預設「全部」
-            help="選『全部』等於所有獲得方式都包含；選『自訂』可勾單項/多項"
+    # 預設：全部都選
+    selected_methods = method_options
+    if mode == "自訂 (可多選)":
+        selected_methods = st.multiselect(
+            "選擇要保留的獲得方式",
+            options=method_options,
+            default=method_options,
         )
-
-        # 預設：全部都選
-        selected_methods = method_options
-
-        if mode == "自訂 (可多選)":
-            selected_methods = st.multiselect(
-                "選擇要保留的獲得方式",
-                options=method_options,
-                default=method_options,   # 初次進來也是全部勾選
-            )
 
     # 從完整統計表開始做過濾
     show_df_1 = items_with_counts.copy()
@@ -263,20 +274,16 @@ def page_item_owner_counts(items_with_counts):
 
         show_df_1 = show_df_1[mask]
 
-    # 要在畫面上顯示的欄位：描述欄 + 擁有人數 + 擁有人名
-    # 不包含 item_desc
+    # 要在畫面上顯示的欄位：描述欄 + 擁有人數 + 擁有人名（不含 item_desc）
     display_cols = DESC_COLS + ["owner_count", "owners"]
 
-    # 排序
-    c_sort, c_dir = st.columns([2, 1])
-    with c_sort:
-        sort_col_1 = st.selectbox(
-            "排序欄位",
-            options=display_cols,
-            index=display_cols.index("owner_count"),
-        )
-    with c_dir:
-        asc_1 = st.toggle("升冪排序（小→大）", value=False)
+    # 排序（手機比較窄，就用一列控件即可）
+    sort_col_1 = st.selectbox(
+        "排序欄位",
+        options=display_cols,
+        index=display_cols.index("owner_count"),
+    )
+    asc_1 = st.toggle("升冪排序（小→大）", value=False)
 
     show_df_1 = show_df_1.sort_values(
         by=sort_col_1,
@@ -284,7 +291,6 @@ def page_item_owner_counts(items_with_counts):
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # 表格只顯示描述欄 + 擁有人數 + 擁有人名（沒有 item_desc）
     st.dataframe(show_df_1[display_cols], use_container_width=True)
 
 
@@ -306,49 +312,50 @@ def page_person_stats(df, owner_cols):
     c1.metric("擁有物品總數", total_items)
     c2.metric("擁有種類數", type_count)
 
-    st.subheader("2-1) 擁有的物品清單")
+    # Tabs：一頁看清單、一頁看種類分布（手機比較好切）
+    tab1, tab2 = st.tabs(["擁有的物品清單", "每種類分布"])
 
-    # 清單搜尋（獨立）
-    kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
-    owned_df_show = owned_df.copy()
+    with tab1:
+        st.subheader("📋 擁有的物品清單")
+        kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
+        owned_df_show = owned_df.copy()
 
-    # 欄名唯一化避免顯示異常
-    owned_df_show.columns = make_unique_columns(list(owned_df_show.columns))
+        owned_df_show.columns = make_unique_columns(list(owned_df_show.columns))
 
-    if kw2.strip():
-        owned_df_show = owned_df_show[
-            owned_df_show["item_desc"].str.contains(kw2, case=False, na=False)
-        ]
+        if kw2.strip():
+            owned_df_show = owned_df_show[
+                owned_df_show["item_desc"].str.contains(kw2, case=False, na=False)
+            ]
 
-    if owned_df_show.empty:
-        st.warning(f"{person_name} 沒有符合搜尋條件的物品。")
-    else:
-        c_sort2, c_dir2 = st.columns([2, 1])
-        with c_sort2:
+        if owned_df_show.empty:
+            st.info(f"{person_name} 沒有符合搜尋條件的物品。")
+        else:
             sort_col_2 = st.selectbox(
                 "清單排序欄位",
                 options=list(owned_df_show.columns),
                 index=0
             )
-        with c_dir2:
             asc_2 = st.toggle("清單升冪排序（小→大）", value=True, key="asc2")
 
-        owned_df_show = owned_df_show.sort_values(
-            by=sort_col_2, ascending=asc_2, kind="mergesort"
+            owned_df_show = owned_df_show.sort_values(
+                by=sort_col_2, ascending=asc_2, kind="mergesort"
+            ).reset_index(drop=True)
+
+            st.dataframe(owned_df_show, use_container_width=True, height=400)
+
+    with tab2:
+        st.subheader("📊 種類分布")
+        asc_3 = st.toggle("種類分布升冪排序（小→大）", value=False, key="asc3")
+        show_type_dist = type_dist.sort_values(
+            by="count", ascending=asc_3
         ).reset_index(drop=True)
+        st.dataframe(show_type_dist, use_container_width=True, height=400)
 
-        st.dataframe(owned_df_show, use_container_width=True)
-
-    st.subheader("2-2) 每種類分布")
-    asc_3 = st.toggle("種類分布升冪排序（小→大）", value=False, key="asc3")
-    show_type_dist = type_dist.sort_values(by="count", ascending=asc_3).reset_index(drop=True)
-    st.dataframe(show_type_dist, use_container_width=True)
-
-    # 👉 可選：在這頁加「下載此人統計」按鈕
+    # 下載此人統計
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        owned_df_show.to_excel(writer, index=False, sheet_name=f"{person_name}_owned_items")
-        show_type_dist.to_excel(writer, index=False, sheet_name=f"{person_name}_type_dist")
+        owned_df.to_excel(writer, index=False, sheet_name=f"{person_name}_owned_items")
+        type_dist.to_excel(writer, index=False, sheet_name=f"{person_name}_type_dist")
     st.download_button(
         "⬇️ 下載此人統計（Excel）",
         data=buf.getvalue(),
@@ -363,45 +370,45 @@ def page_multi_compare(df, owner_cols):
     rank_df = all_people_rank(df, owner_cols)
     all_names = get_all_names(df, owner_cols)
 
-    c_rank_sort, c_rank_dir = st.columns([2, 1])
-    with c_rank_sort:
-        rank_sort_col = st.selectbox("排行榜排序欄位", options=["count", "name"], index=0)
-    with c_rank_dir:
-        rank_asc = st.toggle("升冪排序（小→大）", value=False, key="rankasc")
+    # 用 Tabs 分開「排行列表」和「多人比較」，手機比較好閱讀
+    tab_rank, tab_multi = st.tabs(["排行列表", "多人比較"])
 
-    rank_df_sorted = rank_df.sort_values(
-        by=rank_sort_col, ascending=rank_asc, kind="mergesort"
-    ).reset_index(drop=True)
-    st.dataframe(rank_df_sorted, use_container_width=True)
+    with tab_rank:
+        sort_col = st.selectbox("排行榜排序欄位", options=["count", "name"], index=0)
+        asc = st.toggle("升冪排序（小→大）", value=False, key="rankasc")
 
-    st.markdown("---")
-    st.subheader("多人比較")
-
-    multi_names = st.multiselect("選多個人顯示比較", options=all_names, default=[])
-
-    if multi_names:
-        comp_rows = []
-        for n in multi_names:
-            total_items_n, _, type_count_n, _, _ = person_stats(
-                df, n, TYPE_COL, DESC_COLS, OWNER_START_COL
-            )
-            comp_rows.append({"name": n, "items": total_items_n, "types": type_count_n})
-
-        comp_df = pd.DataFrame(comp_rows).sort_values(
-            by="items", ascending=False, kind="mergesort"
+        rank_df_sorted = rank_df.sort_values(
+            by=sort_col, ascending=asc, kind="mergesort"
         ).reset_index(drop=True)
-        st.dataframe(comp_df, use_container_width=True)
+        st.dataframe(rank_df_sorted, use_container_width=True, height=400)
+
+    with tab_multi:
+        st.markdown("### 多人比較")
+        multi_names = st.multiselect("選多個人顯示比較", options=all_names, default=[])
+
+        if multi_names:
+            comp_rows = []
+            for n in multi_names:
+                total_items_n, _, type_count_n, _, _ = person_stats(
+                    df, n, TYPE_COL, DESC_COLS, OWNER_START_COL
+                )
+                comp_rows.append({"name": n, "items": total_items_n, "types": type_count_n})
+
+            comp_df = pd.DataFrame(comp_rows).sort_values(
+                by="items", ascending=False, kind="mergesort"
+            ).reset_index(drop=True)
+            st.dataframe(comp_df, use_container_width=True, height=400)
+        else:
+            st.info("請從上方選擇至少一個人。")
+
 
 def page_pair_diff(df, items_with_counts, owner_cols):
-    st.subheader("🔍 兩人差異比較（各自擁有但對方沒有的花 & 兩人都沒有的花）")
+    st.subheader("🔍 兩人差異比較（各自擁有 & 兩人都沒有的花）")
 
     all_names = get_all_names(df, owner_cols)
 
-    colA, colB = st.columns(2)
-    with colA:
-        person_a = st.selectbox("選擇人物 A", [""] + all_names, key="pairA")
-    with colB:
-        person_b = st.selectbox("選擇人物 B", [""] + all_names, key="pairB")
+    person_a = st.selectbox("選擇人物 A", [""] + all_names, key="pairA")
+    person_b = st.selectbox("選擇人物 B", [""] + all_names, key="pairB")
 
     if not person_a or not person_b:
         st.info("請先選擇兩個人。")
@@ -411,7 +418,6 @@ def page_pair_diff(df, items_with_counts, owner_cols):
         st.warning("請選兩個**不同**的人。")
         return
 
-    # 重新取得 owners_norm（用 normalize_name）
     owners_norm = df[owner_cols].applymap(normalize_name)
 
     def row_has_person(row, person):
@@ -429,7 +435,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
     only_a_mask = has_a & ~has_b
     only_b_mask = has_b & ~has_a
-    neither_mask = ~has_a & ~has_b   # ✅ 兩人都沒有的花
+    neither_mask = ~has_a & ~has_b   # 兩人都沒有的花
 
     base_cols = DESC_COLS + ["owner_count", "owners"]
 
@@ -457,7 +463,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     df_only_b = filter_by_kw(df_only_b, kw)
     df_neither = filter_by_kw(df_neither, kw)
 
-    # 顯示統計數字：A 獨有、B 獨有、兩人都沒有
+    # 上方顯示統計數字
     c_stat_a, c_stat_b, c_stat_n = st.columns(3)
     with c_stat_a:
         st.metric(f"{person_a} 獨有花種數", len(df_only_a))
@@ -466,15 +472,17 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     with c_stat_n:
         st.metric("兩人都沒有的花種數", len(df_neither))
 
-    st.markdown("---")
+    # 用 Tabs 來切換三種列表（手機比較好看）
+    tab_a, tab_b, tab_n = st.tabs([
+        f"{person_a} 獨有",
+        f"{person_b} 獨有",
+        "兩人都沒有"
+    ])
 
-    # A / B 兩邊並排顯示表格
-    col_left, col_right = st.columns(2)
-
-    with col_left:
+    with tab_a:
         st.markdown(f"### 🌸 {person_a} 擁有但 {person_b} 沒有的花")
         if df_only_a.empty:
-            st.info(f"{person_a} 沒有任何獨有的花。")
+            st.info(f"{person_a} 沒有任何獨有的花（或被搜尋條件排除）。")
         else:
             sort_col_a = st.selectbox(
                 f"{person_a} 排序欄位",
@@ -490,12 +498,12 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 kind="mergesort",
             ).reset_index(drop=True)
 
-            st.dataframe(df_show_a, use_container_width=True)
+            st.dataframe(df_show_a, use_container_width=True, height=400)
 
-    with col_right:
+    with tab_b:
         st.markdown(f"### 🌼 {person_b} 擁有但 {person_a} 沒有的花")
         if df_only_b.empty:
-            st.info(f"{person_b} 沒有任何獨有的花。")
+            st.info(f"{person_b} 沒有任何獨有的花（或被搜尋條件排除）。")
         else:
             sort_col_b = st.selectbox(
                 f"{person_b} 排序欄位",
@@ -511,34 +519,37 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 kind="mergesort",
             ).reset_index(drop=True)
 
-            st.dataframe(df_show_b, use_container_width=True)
+            st.dataframe(df_show_b, use_container_width=True, height=400)
 
-    # 底下新增「兩人都沒有的花」
-    st.markdown("---")
-    st.markdown("### 🌱 兩人都沒有的花")
+    with tab_n:
+        st.markdown("### 🌱 兩人都沒有的花")
+        if df_neither.empty:
+            st.info("目前沒有任何兩人都沒有的花（或是被關鍵字篩掉了）。")
+        else:
+            sort_col_n = st.selectbox(
+                "兩人都沒有的花 - 排序欄位",
+                options=base_cols,
+                index=base_cols.index("花名") if "花名" in base_cols else 0,
+                key="pair_sortN",
+            )
+            asc_n = st.toggle("升冪排序（小→大）", value=True, key="pair_ascN")
 
-    if df_neither.empty:
-        st.info("目前沒有任何兩人都沒有的花（或是被關鍵字篩掉了）。")
-    else:
-        sort_col_n = st.selectbox(
-            "兩人都沒有的花 - 排序欄位",
-            options=base_cols,
-            index=base_cols.index("花名") if "花名" in base_cols else 0,
-            key="pair_sortN",
-        )
-        asc_n = st.toggle("升冪排序（小→大）", value=True, key="pair_ascN")
+            df_show_n = df_neither.sort_values(
+                by=sort_col_n,
+                ascending=asc_n,
+                kind="mergesort",
+            ).reset_index(drop=True)
 
-        df_show_n = df_neither.sort_values(
-            by=sort_col_n,
-            ascending=asc_n,
-            kind="mergesort",
-        ).reset_index(drop=True)
-
-        st.dataframe(df_show_n, use_container_width=True)
+            st.dataframe(df_show_n, use_container_width=True, height=400)
 
 
 # ---------- 主程式 ----------
-st.set_page_config(page_title="物品擁有統計工具", layout="wide")
+st.set_page_config(
+    page_title="物品擁有統計工具",
+    layout="centered",                 # ✅ 手機上比較好閱讀
+    initial_sidebar_state="collapsed"  # ✅ 手機預設收起側欄
+)
+
 st.title("📦 物品擁有統計工具")
 st.caption("統計每項物品擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
 
@@ -579,8 +590,7 @@ PAGES = {
     "指定人員擁有統計": lambda: page_person_stats(df, owner_cols),
     "兩人差異比較": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
-    # 未來擴充：在這裡多加項目即可，例如：
-    # "某某新功能": lambda: page_new_feature(df, items_with_counts, owner_cols),
+    # 未來擴充：在這裡多加項目即可
 }
 
 with st.sidebar:
