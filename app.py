@@ -4,7 +4,6 @@ Created on Fri Nov 28 11:32:03 2025
 
 @author: delia_chang
 """
-
 import re
 import io
 import pandas as pd
@@ -16,10 +15,10 @@ import streamlit as st
 # =========================================================
 FIXED_SHEET_URL = "https://docs.google.com/spreadsheets/d/1-_towzRVHsn7spZrKNdc00RGNG_3xq8_JQ75sPY9HbI/edit?gid=1203973994#gid=1203973994"
 
-DESC_COLS  = ["品", "花名", "獲得方式", "備註"]  # 描述欄（原 A~D）
+DESC_COLS = ["品", "花名", "獲得方式", "備註"]  # 描述欄（原 A~D）
 OWNER_START_COL = "名字"                        # 擁有人欄第一欄
 TYPE_COL = "花名"                               # 種類欄（預設用花名當種類）
-# 若你要用「品」當種類，把上一行改成 TYPE_COL="品"
+# 若你要用「品」當種類，把上一行改成 TYPE_COL = "品"
 # =========================================================
 
 
@@ -82,7 +81,7 @@ def canonicalize_name(name: str) -> str:
     if not s:
         return ""
 
-    # 匹配 s10.花明月、S10花明月、10.花明月、s10．花明月等等
+    # 匹配 s10.花明月、S10花明月、10.花明月、s10．花明月 等等
     m = re.match(r"^[sS]?(\d+)[\.．]?(.*)$", s)
     if m:
         num, rest = m.groups()
@@ -254,18 +253,18 @@ def get_all_names(df, owner_cols):
 
 # ---------- 各頁面渲染函式 ----------
 def page_raw_table(df):
-    st.subheader("🧾 原始表格")
+    st.subheader("🌺 花名冊")
     st.dataframe(df_with_flower_index(df), use_container_width=True, height=500)
     st.markdown(
         """
-        - 此頁顯示 Google Sheet 原始內容（名單已在程式內做 s10.xxx 格式與去重處理，用於統計）。
+        - 此頁顯示 Google Sheet 原始內容（名單會在統計時做 s10.xxx 格式與去重處理）。
         - 其他功能頁面會在此基礎上做統計與篩選。
         """
     )
 
 
 def page_item_owner_counts(items_with_counts):
-    st.subheader("📊 每項物品擁有人數")
+    st.subheader("🌼 每種花花擁有人數")
 
     METHOD_COL = "獲得方式"
 
@@ -353,15 +352,16 @@ def page_item_owner_counts(items_with_counts):
 
 
 def page_person_stats(df, owner_cols):
-    st.subheader("👤 指定人員擁有統計")
+    st.subheader("🌹 指定人員擁有統計")
 
     all_names = get_all_names(df, owner_cols)
     person_name = st.selectbox("選擇人員", [""] + all_names)
 
     if not person_name:
-        st.info("選一個人就會顯示他的擁有清單與種類分布。")
+        st.info("選一個人就會顯示他的擁有清單與需要的酷東西。")
         return
 
+    # 既有：這個人已經擁有的統計
     total_items, owned_df, type_count, type_dist, _ = person_stats(
         df, person_name, TYPE_COL, DESC_COLS, OWNER_START_COL
     )
@@ -370,10 +370,12 @@ def page_person_stats(df, owner_cols):
     c1.metric("擁有物品總數", total_items)
     c2.metric("擁有種類數", type_count)
 
-    tab1, tab2 = st.tabs(["擁有的物品清單", "每種類分布"])
+    # 🔁 第二個 tab 改成「我需要的酷東西」
+    tab1, tab2 = st.tabs(["🌼 擁有的物品清單", "🌺 我需要的酷東西"])
 
+    # ---------- Tab 1：已擁有清單 ----------
     with tab1:
-        st.subheader("📋 擁有的物品清單")
+        st.subheader("🌼 擁有的物品清單")
         kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
         owned_df_show = owned_df.copy()
 
@@ -404,14 +406,75 @@ def page_person_stats(df, owner_cols):
                 height=400
             )
 
+    # ---------- Tab 2：我需要的酷東西（還沒拿到的花） ----------
     with tab2:
-        st.subheader("📊 種類分布")
-        asc_3 = st.toggle("種類分布升冪排序（小→大）", value=False, key="asc3")
-        show_type_dist = type_dist.sort_values(
-            by="count", ascending=asc_3
-        ).reset_index(drop=True)
-        st.dataframe(show_type_dist, use_container_width=True, height=400)
+        st.subheader("🌺 我還沒有拿到的花")
 
+        # 先算出這個人「沒有」的那幾朵花
+        owner_df = df[owner_cols]
+        unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
+
+        has_person = unique_names_series.apply(lambda names: person_name in names)
+
+        safe_cols = []
+        for c in DESC_COLS + [TYPE_COL]:
+            if c not in safe_cols:
+                safe_cols.append(c)
+
+        missing_df = df.loc[~has_person, safe_cols].copy()
+        missing_df["item_desc"] = missing_df[DESC_COLS].astype(str).agg(" | ".join, axis=1)
+
+        miss_total = len(missing_df)
+        type_data = missing_df[TYPE_COL]
+        if isinstance(type_data, pd.DataFrame):
+            type_series = type_data.iloc[:, 0]
+        else:
+            type_series = type_data
+        miss_type_count = (
+            type_series.dropna().astype(str).str.strip().nunique()
+            if miss_total > 0 else 0
+        )
+
+        c3, c4 = st.columns(2)
+        c3.metric("還沒拿到的花（筆數）", miss_total)
+        c4.metric("還沒拿到的花（種類數）", miss_type_count)
+
+        kw3 = st.text_input("🔍 搜尋我還沒有拿到的花", value="", key="kw3")
+        missing_df_show = missing_df.copy()
+
+        if kw3.strip():
+            missing_df_show = missing_df_show[
+                missing_df_show["item_desc"].str.contains(kw3, case=False, na=False)
+            ]
+
+        if missing_df_show.empty:
+            st.info("目前沒有符合條件的『還沒拿到的花』，或是被搜尋條件排掉了。")
+        else:
+            sort_col_3 = st.selectbox(
+                "未取得清單排序欄位",
+                options=safe_cols,
+                index=safe_cols.index("花名") if "花名" in safe_cols else 0,
+                key="missing_sort",
+            )
+            asc_3 = st.toggle(
+                "未取得清單升冪排序（小→大）",
+                value=True,
+                key="missing_asc",
+            )
+
+            missing_df_show = missing_df_show.sort_values(
+                by=sort_col_3,
+                ascending=asc_3,
+                kind="mergesort",
+            ).reset_index(drop=True)
+
+            st.dataframe(
+                df_with_flower_index(missing_df_show),
+                use_container_width=True,
+                height=400
+            )
+
+    # 保留原本的下載功能（下載「已擁有」的統計）
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         owned_df.to_excel(writer, index=False, sheet_name=f"{person_name}_owned_items")
@@ -425,12 +488,12 @@ def page_person_stats(df, owner_cols):
 
 
 def page_multi_compare(df, owner_cols):
-    st.subheader("📈 多人比較 / 排行")
+    st.subheader("🌻 多人比較 / 排行")
 
     rank_df = all_people_rank(df, owner_cols)
     all_names = get_all_names(df, owner_cols)
 
-    tab_rank, tab_multi = st.tabs(["排行列表", "多人比較"])
+    tab_rank, tab_multi = st.tabs(["🌹 排行列表", "🌻 多人比較"])
 
     with tab_rank:
         sort_col = st.selectbox("排行榜排序欄位", options=["count", "name"], index=0)
@@ -442,7 +505,7 @@ def page_multi_compare(df, owner_cols):
         st.dataframe(rank_df_sorted, use_container_width=True, height=400)
 
     with tab_multi:
-        st.markdown("### 多人比較")
+        st.markdown("### 🌻 多人比較")
         multi_names = st.multiselect("選多個人顯示比較", options=all_names, default=[])
 
         if multi_names:
@@ -462,7 +525,7 @@ def page_multi_compare(df, owner_cols):
 
 
 def page_pair_diff(df, items_with_counts, owner_cols):
-    st.subheader("🔍 兩人差異比較（各自擁有 & 兩人都沒有的花）")
+    st.subheader("💐 兩人差異比較（各自擁有 & 兩人都沒有的花）")
 
     all_names = get_all_names(df, owner_cols)
 
@@ -526,9 +589,9 @@ def page_pair_diff(df, items_with_counts, owner_cols):
         st.metric("兩人都沒有的花種數", len(df_neither))
 
     tab_a, tab_b, tab_n = st.tabs([
-        f"{person_a} 獨有",
-        f"{person_b} 獨有",
-        "兩人都沒有"
+        f"🌸 {person_a} 獨有",
+        f"🌼 {person_b} 獨有",
+        "🌱 兩人都沒有"
     ])
 
     with tab_a:
@@ -609,13 +672,13 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
 # ---------- 主程式 ----------
 st.set_page_config(
-    page_title="物品擁有統計工具",
+    page_title="花農市場調查局",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
-st.title("📦 物品擁有統計工具")
-st.caption("統計每項物品擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
+st.title("🌸 花農市場調查局")
+st.caption("🌿 統計每項物品擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
 
 # 載入固定 Google Sheet（重新整理網頁就會重新執行並讀取）
 try:
@@ -649,15 +712,15 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 
 # 左側功能切換（保留擴充性）
 PAGES = {
-    "原始表格": lambda: page_raw_table(df),
-    "每項物品擁有人數": lambda: page_item_owner_counts(items_with_counts),
-    "指定人員擁有統計": lambda: page_person_stats(df, owner_cols),
-    "兩人差異比較": lambda: page_pair_diff(df, items_with_counts, owner_cols),
-    "多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
+    "🌺 花名冊": lambda: page_raw_table(df),
+    "🌼 每項物品擁有人數": lambda: page_item_owner_counts(items_with_counts),
+    "🌹 指定人員擁有統計": lambda: page_person_stats(df, owner_cols),
+    "💐 兩人差異比較": lambda: page_pair_diff(df, items_with_counts, owner_cols),
+    "🌻 多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
 }
 
 with st.sidebar:
-    st.header("📂 功能選單")
+    st.header("🌷 功能選單")
     page_label = st.radio(
         "選擇功能",
         options=list(PAGES.keys()),
