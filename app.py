@@ -24,7 +24,7 @@ TYPE_COL = "花名"                               # 種類欄（預設用花名�
 
 
 # ---------- 工具函式 ----------
-def google_sheet_to_csv_url(sheet_url: str, gid: str | None = None) -> str:
+def google_sheet_to_csv_url(sheet_url: str, gid: str = None) -> str:
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", sheet_url)
     if not m:
         raise ValueError("URL 看起來不像 Google Sheets")
@@ -45,6 +45,7 @@ def load_sheet(sheet_url: str) -> pd.DataFrame:
 
 
 def normalize_name(x):
+    """基本清理：去 NaN、怪空白、trim。**不做 s10. 格式處理**。"""
     if pd.isna(x):
         return ""
     s = str(x)
@@ -60,7 +61,7 @@ def normalize_name(x):
 
 def split_names(cell: str):
     """
-    把同一格可能塞的多個名字拆開：
+    把同一格可能塞的多個「名單字串」拆開：
     支援：、 , ; / 換行 以及多空白
     """
     if not cell:
@@ -68,6 +69,63 @@ def split_names(cell: str):
     parts = re.split(r"[、,;/\n\r]+|\s{2,}", cell)
     parts = [p.strip() for p in parts if p.strip()]
     return parts
+
+
+def canonicalize_name(name: str) -> str:
+    """
+    將名單整理成統一格式：
+    1. s/S + 數字 + (可選 . 或全形．) + 名字
+       → 統一為 s{no}.{name} 且 s 一律小寫
+    2. 其他格式則只做 trim（不強制改型態）
+    """
+    s = normalize_name(name)
+    if not s:
+        return ""
+
+    # 匹配 s10.花明月、S10花明月、10.花明月、s10．花明月等等
+    m = re.match(r"^[sS]?(\d+)[\.．]?(.*)$", s)
+    if m:
+        num, rest = m.groups()
+        rest = rest.strip()
+        if rest:
+            return f"s{num}.{rest}"
+        else:
+            return f"s{num}"
+    return s
+
+
+def extract_unique_names_from_row(row) -> list:
+    """
+    從一整列（所有擁有人欄）中取出：
+    - 拆開每格可能的多名單
+    - normalize + canonicalize
+    - 在「同一朵花（同一 row）」裡去掉重複（要求 2）
+    回傳：該 row 內「唯一的名單清單」
+    """
+    seen = set()
+    names = []
+    for v in row:
+        base = normalize_name(v)
+        if not base:
+            continue
+        for token in split_names(base):
+            token = canonicalize_name(token)
+            if token and token not in seen:
+                seen.add(token)
+                names.append(token)
+    return names
+
+
+def df_with_flower_index(df: pd.DataFrame, name_col: str = "花名") -> pd.DataFrame:
+    """
+    顯示用的小工具：
+    如果有「花名」這個欄位，就把它設成 index，
+    這樣在 st.dataframe 水平捲動的時候，左邊花名會固定。
+    """
+    if name_col in df.columns:
+        df = df.copy()
+        df = df.set_index(name_col)
+    return df
 
 
 def make_unique_columns(columns):
@@ -85,6 +143,13 @@ def make_unique_columns(columns):
 
 
 def compute_owner_counts(df, desc_cols, owner_start_col):
+    """
+    這裡會：
+    - 用 extract_unique_names_from_row 做「每朵花唯一名單」
+    - owner_count = 名單數量（已去重）
+    - owners = 逗號串名單（已 canonical：s10.xxx）
+    - item_desc = 合併描述欄
+    """
     cols = list(df.columns)
     if owner_start_col not in cols:
         raise ValueError(f"找不到 OWNER_START_COL：{owner_start_col}")
@@ -92,50 +157,41 @@ def compute_owner_counts(df, desc_cols, owner_start_col):
     start_idx = cols.index(owner_start_col)
     owner_cols = cols[start_idx:]
 
-    owners_norm = df[owner_cols].applymap(normalize_name)
+    owner_df = df[owner_cols]
 
-    # 擁有人數
-    owner_count = owners_norm.ne("").sum(axis=1)
+    unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
 
-    # 擁有人名列表（耐髒版，支援同格多名字）
-    def owners_list(row):
-        names = []
-        for v in row:
-            v = normalize_name(v)
-            if not v:
-                continue
-            names.extend(split_names(v))
-        # 去重但保序
-        seen = set()
-        uniq = []
-        for n in names:
-            if n not in seen:
-                seen.add(n)
-                uniq.append(n)
-        return ", ".join(uniq)
-
-    owners_str = owners_norm.apply(owners_list, axis=1)
+    owner_count = unique_names_series.apply(len)
+    owners_str = unique_names_series.apply(lambda names: ", ".join(names))
 
     out = df.copy()
     out["owner_count"] = owner_count
     out["owners"] = owners_str
-
-    # 合併描述一欄（方便搜尋）
     out["item_desc"] = out[desc_cols].astype(str).agg(" | ".join, axis=1)
+
+    # owners_norm 仍然保留原始清理版（給其他地方需要原格內容用）
+    owners_norm = owner_df.applymap(normalize_name)
 
     return out, owner_cols, owners_norm
 
 
 def person_stats(df, person_name, type_col, desc_cols, owner_start_col):
+    """
+    指定人員統計：
+    - 用 extract_unique_names_from_row 判斷 row 是否包含該名單
+    - 因為 get_all_names 用的也是 canonicalize_name，
+      所以 person_name 已經是 s10.xxx 的統一格式
+    """
     cols = list(df.columns)
     start_idx = cols.index(owner_start_col)
     owner_cols = cols[start_idx:]
 
-    owners_norm = df[owner_cols].applymap(normalize_name)
-    has_person = owners_norm.apply(
-        lambda r: any(person_name in split_names(normalize_name(v)) for v in r),
-        axis=1
-    )
+    owner_df = df[owner_cols]
+
+    # 每 row 名單（已去重 + canonical）
+    unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
+
+    has_person = unique_names_series.apply(lambda names: person_name in names)
 
     safe_cols = []
     for c in desc_cols + [type_col]:
@@ -162,15 +218,20 @@ def person_stats(df, person_name, type_col, desc_cols, owner_start_col):
 
 
 def all_people_rank(df, owner_cols):
-    owners_norm = df[owner_cols].applymap(normalize_name)
+    """
+    多人排行：
+    - 每朵花用 extract_unique_names_from_row → 去重
+    - 但跨花朵仍然累加（同人拿多朵花會多次計數）
+    """
+    owner_df = df[owner_cols]
     flat = []
-    for v in owners_norm.values.ravel():
-        v = normalize_name(v)
-        if not v:
-            continue
-        flat.extend(split_names(v))
+    for _, row in owner_df.iterrows():
+        names = extract_unique_names_from_row(row)
+        flat.extend(names)
+
     if not flat:
         return pd.DataFrame(columns=["name", "count"])
+
     rank = pd.Series(flat).value_counts()
     rank_df = rank.reset_index()
     rank_df.columns = ["name", "count"]
@@ -178,24 +239,26 @@ def all_people_rank(df, owner_cols):
 
 
 def get_all_names(df, owner_cols):
-    owners_norm = df[owner_cols].applymap(normalize_name)
-    names = []
-    for v in owners_norm.values.ravel():
-        v = normalize_name(v)
-        if not v:
-            continue
-        names.extend(split_names(v))
-    names = sorted(set(names))
+    """
+    所有出現過的名單（已 canonical + 去重）
+    """
+    owner_df = df[owner_cols]
+    names_set = set()
+    for _, row in owner_df.iterrows():
+        names = extract_unique_names_from_row(row)
+        names_set.update(names)
+
+    names = sorted(names_set)
     return names
 
 
 # ---------- 各頁面渲染函式 ----------
 def page_raw_table(df):
     st.subheader("🧾 原始表格")
-    st.dataframe(df, use_container_width=True, height=500)
+    st.dataframe(df_with_flower_index(df), use_container_width=True, height=500)
     st.markdown(
         """
-        - 此頁顯示 Google Sheet 原始內容。
+        - 此頁顯示 Google Sheet 原始內容（名單已在程式內做 s10.xxx 格式與去重處理，用於統計）。
         - 其他功能頁面會在此基礎上做統計與篩選。
         """
     )
@@ -217,18 +280,16 @@ def page_item_owner_counts(items_with_counts):
     method_values_raw = sorted(set([m for m in method_series.unique() if m]))
 
     # 將「數字 + 等」的項目分組成「等級」一個選項
-    level_pattern = re.compile(r"^\d+等$")   # 例如 1等, 5等, 10等 ...
+    level_pattern = re.compile(r"^\d+等$")
     level_methods = [m for m in method_values_raw if level_pattern.match(m)]
     normal_methods = [m for m in method_values_raw if m not in level_methods]
 
     LEVEL_LABEL = "等級（1等/5等…）"
 
-    # 最後要給使用者選的選項
     method_options = normal_methods.copy()
     if level_methods:
         method_options.append(LEVEL_LABEL)
 
-    # 搜尋 + 獲得方式模式
     kw = st.text_input("🔍 搜尋物品（可搜描述關鍵字）", value="")
 
     mode = st.selectbox(
@@ -238,7 +299,6 @@ def page_item_owner_counts(items_with_counts):
         help="選『全部』等於所有獲得方式都包含；選『自訂』可勾單項/多項"
     )
 
-    # 預設：全部都選
     selected_methods = method_options
     if mode == "自訂 (可多選)":
         selected_methods = st.multiselect(
@@ -247,16 +307,13 @@ def page_item_owner_counts(items_with_counts):
             default=method_options,
         )
 
-    # 從完整統計表開始做過濾
     show_df_1 = items_with_counts.copy()
 
-    # 1) 關鍵字搜尋（用 item_desc，比對完就不顯示這欄）
     if kw.strip():
         show_df_1 = show_df_1[
             show_df_1["item_desc"].str.contains(kw, case=False, na=False)
         ]
 
-    # 2) 依獲得方式篩選
     if selected_methods and set(selected_methods) != set(method_options):
         method_clean = (
             show_df_1[METHOD_COL]
@@ -274,10 +331,8 @@ def page_item_owner_counts(items_with_counts):
 
         show_df_1 = show_df_1[mask]
 
-    # 要在畫面上顯示的欄位：描述欄 + 擁有人數 + 擁有人名（不含 item_desc）
     display_cols = DESC_COLS + ["owner_count", "owners"]
 
-    # 排序（手機比較窄，就用一列控件即可）
     sort_col_1 = st.selectbox(
         "排序欄位",
         options=display_cols,
@@ -291,7 +346,10 @@ def page_item_owner_counts(items_with_counts):
         kind="mergesort",
     ).reset_index(drop=True)
 
-    st.dataframe(show_df_1[display_cols], use_container_width=True)
+    st.dataframe(
+        df_with_flower_index(show_df_1[display_cols]),
+        use_container_width=True
+    )
 
 
 def page_person_stats(df, owner_cols):
@@ -312,7 +370,6 @@ def page_person_stats(df, owner_cols):
     c1.metric("擁有物品總數", total_items)
     c2.metric("擁有種類數", type_count)
 
-    # Tabs：一頁看清單、一頁看種類分布（手機比較好切）
     tab1, tab2 = st.tabs(["擁有的物品清單", "每種類分布"])
 
     with tab1:
@@ -341,7 +398,11 @@ def page_person_stats(df, owner_cols):
                 by=sort_col_2, ascending=asc_2, kind="mergesort"
             ).reset_index(drop=True)
 
-            st.dataframe(owned_df_show, use_container_width=True, height=400)
+            st.dataframe(
+                df_with_flower_index(owned_df_show),
+                use_container_width=True,
+                height=400
+            )
 
     with tab2:
         st.subheader("📊 種類分布")
@@ -351,7 +412,6 @@ def page_person_stats(df, owner_cols):
         ).reset_index(drop=True)
         st.dataframe(show_type_dist, use_container_width=True, height=400)
 
-    # 下載此人統計
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         owned_df.to_excel(writer, index=False, sheet_name=f"{person_name}_owned_items")
@@ -370,7 +430,6 @@ def page_multi_compare(df, owner_cols):
     rank_df = all_people_rank(df, owner_cols)
     all_names = get_all_names(df, owner_cols)
 
-    # 用 Tabs 分開「排行列表」和「多人比較」，手機比較好閱讀
     tab_rank, tab_multi = st.tabs(["排行列表", "多人比較"])
 
     with tab_rank:
@@ -418,20 +477,16 @@ def page_pair_diff(df, items_with_counts, owner_cols):
         st.warning("請選兩個**不同**的人。")
         return
 
-    owners_norm = df[owner_cols].applymap(normalize_name)
+    cols = list(df.columns)
+    start_idx = cols.index(OWNER_START_COL)
+    owner_cols = cols[start_idx:]
+    owner_df = df[owner_cols]
 
-    def row_has_person(row, person):
-        for v in row:
-            v = normalize_name(v)
-            if not v:
-                continue
-            names = split_names(v)
-            if person in names:
-                return True
-        return False
+    # 每 row 的唯一名單清單
+    unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
 
-    has_a = owners_norm.apply(lambda r: row_has_person(r, person_a), axis=1)
-    has_b = owners_norm.apply(lambda r: row_has_person(r, person_b), axis=1)
+    has_a = unique_names_series.apply(lambda names: person_a in names)
+    has_b = unique_names_series.apply(lambda names: person_b in names)
 
     only_a_mask = has_a & ~has_b
     only_b_mask = has_b & ~has_a
@@ -443,7 +498,6 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     df_only_b = items_with_counts.loc[only_b_mask, base_cols].copy()
     df_neither = items_with_counts.loc[neither_mask, base_cols].copy()
 
-    # 關鍵字搜尋（套在三邊）
     kw = st.text_input(
         "🔍 搜尋關鍵字（品 / 花名 / 獲得方式 / 備註）",
         value="",
@@ -463,7 +517,6 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     df_only_b = filter_by_kw(df_only_b, kw)
     df_neither = filter_by_kw(df_neither, kw)
 
-    # 上方顯示統計數字
     c_stat_a, c_stat_b, c_stat_n = st.columns(3)
     with c_stat_a:
         st.metric(f"{person_a} 獨有花種數", len(df_only_a))
@@ -472,7 +525,6 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     with c_stat_n:
         st.metric("兩人都沒有的花種數", len(df_neither))
 
-    # 用 Tabs 來切換三種列表（手機比較好看）
     tab_a, tab_b, tab_n = st.tabs([
         f"{person_a} 獨有",
         f"{person_b} 獨有",
@@ -498,7 +550,11 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 kind="mergesort",
             ).reset_index(drop=True)
 
-            st.dataframe(df_show_a, use_container_width=True, height=400)
+            st.dataframe(
+                df_with_flower_index(df_show_a),
+                use_container_width=True,
+                height=400
+            )
 
     with tab_b:
         st.markdown(f"### 🌼 {person_b} 擁有但 {person_a} 沒有的花")
@@ -519,7 +575,11 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 kind="mergesort",
             ).reset_index(drop=True)
 
-            st.dataframe(df_show_b, use_container_width=True, height=400)
+            st.dataframe(
+                df_with_flower_index(df_show_b),
+                use_container_width=True,
+                height=400
+            )
 
     with tab_n:
         st.markdown("### 🌱 兩人都沒有的花")
@@ -540,14 +600,18 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 kind="mergesort",
             ).reset_index(drop=True)
 
-            st.dataframe(df_show_n, use_container_width=True, height=400)
+            st.dataframe(
+                df_with_flower_index(df_show_n),
+                use_container_width=True,
+                height=400
+            )
 
 
 # ---------- 主程式 ----------
 st.set_page_config(
     page_title="物品擁有統計工具",
-    layout="centered",                 # ✅ 手機上比較好閱讀
-    initial_sidebar_state="collapsed"  # ✅ 手機預設收起側欄
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
 st.title("📦 物品擁有統計工具")
@@ -578,7 +642,7 @@ if TYPE_COL not in cols:
     st.error(f"TYPE_COL 不存在：{TYPE_COL}")
     st.stop()
 
-# 預先算好共用統計
+# 預先算好共用統計（這裡已經做了名單 canonical + 去重）
 items_with_counts, owner_cols, owners_norm = compute_owner_counts(
     df, DESC_COLS, OWNER_START_COL
 )
@@ -590,7 +654,6 @@ PAGES = {
     "指定人員擁有統計": lambda: page_person_stats(df, owner_cols),
     "兩人差異比較": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "多人比較 / 排行": lambda: page_multi_compare(df, owner_cols),
-    # 未來擴充：在這裡多加項目即可
 }
 
 with st.sidebar:
@@ -601,5 +664,4 @@ with st.sidebar:
         index=0,
     )
 
-# 根據選擇執行對應頁面
 PAGES[page_label]()
