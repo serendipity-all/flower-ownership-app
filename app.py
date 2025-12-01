@@ -36,7 +36,8 @@ def google_sheet_to_csv_url(sheet_url: str, gid: str = None) -> str:
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False) 這行會造成無法取得最新資料
+@st.cache_data(show_spinner=False, ttl=60)  # ttl 單位是秒，這樣是60秒更新一次，如果希望一直更新，直接把這行block掉就好
 def load_sheet(sheet_url: str) -> pd.DataFrame:
     csv_url = google_sheet_to_csv_url(sheet_url)
     df = pd.read_csv(csv_url)
