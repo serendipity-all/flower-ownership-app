@@ -38,11 +38,18 @@ def google_sheet_to_csv_url(sheet_url: str, gid: str = None) -> str:
 
 # @st.cache_data(show_spinner=False) 這行會造成無法取得最新資料
 @st.cache_data(show_spinner=False, ttl=60)  # ttl 單位是秒，這樣是60秒更新一次，如果希望一直更新，直接把這行block掉就好
-def load_sheet(sheet_url: str) -> pd.DataFrame:
+def load_sheet(sheet_url: str):
+    """
+    讀取 Google Sheet，並回傳：
+    - df: 資料表
+    - loaded_at: 資料載入時間（Asia/Taipei）
+    """
     csv_url = google_sheet_to_csv_url(sheet_url)
     df = pd.read_csv(csv_url)
-    return df
 
+    # 使用台北時區時間
+    loaded_at = pd.Timestamp.now(tz="Asia/Taipei")
+    return df, loaded_at
 
 def normalize_name(x):
     """基本清理：去 NaN、怪空白、trim。**不做 s10. 格式處理**。"""
@@ -256,6 +263,7 @@ def get_all_names(df, owner_cols):
 def page_raw_table(df):
     st.subheader("🌺 花名冊")
     st.dataframe(df_with_flower_index(df), use_container_width=True, height=500)
+    st.caption("🌿 點擊表格欄位名稱可依該欄位進行排序。")
     st.markdown(
         """
         - 此頁顯示 Google Sheet 原始內容（名單會在統計時做 s10.xxx 格式與去重處理）。
@@ -699,6 +707,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
                 use_container_width=True,
                 height=500,
             )
+            st.caption("🌿 點擊表格欄位名稱可依該欄位進行排序。")
 
     # -------- Tab 2：都沒人擁有的花列表 --------
     with tab_none:
@@ -742,11 +751,11 @@ st.set_page_config(
 
 st.title("🌸 花農市場調查局")
 st.caption("🌿 統計每種花擁有人數、擁有人名列表、指定人員清單、多人比較，並支援搜尋與篩選。")
-st.caption("🌿 點擊表格欄位名稱可依該欄位進行排序。")
+
 
 # 載入固定 Google Sheet（重新整理網頁就會重新執行並讀取）
 try:
-    df = load_sheet(FIXED_SHEET_URL)
+    df, loaded_at = load_sheet(FIXED_SHEET_URL)
 except Exception as e:
     st.error(f"固定 URL 載入失敗：{e}")
     st.stop()
@@ -768,6 +777,9 @@ if OWNER_START_COL not in cols:
 if TYPE_COL not in cols:
     st.error(f"TYPE_COL 不存在：{TYPE_COL}")
     st.stop()
+
+# ✅ 顯示資料最後載入時間
+st.caption(f"📅 資料最後載入時間：{loaded_at.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # 預先算好共用統計（這裡已經做了名單 canonical + 去重）
 items_with_counts, owner_cols, owners_norm = compute_owner_counts(
