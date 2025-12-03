@@ -389,14 +389,14 @@ def page_item_owner_counts(items_with_counts):
 
 
 
-def page_person_stats(df, owner_cols):
+def page_person_stats(df, owner_cols, item_with_counts):
     st.subheader("🌹 個人花圃")
 
     all_names = get_all_names(df, owner_cols)
-    person_name = st.selectbox("選擇人員", [""] + all_names)
+    person_name = st.selectbox("選擇人員(可用關鍵字搜尋)", [""] + all_names)
 
     if not person_name:
-        st.info("選一個花農就會顯示他擁有的花跟待下架的酷東西。")
+        st.info("選一個花農就會顯示他擁有的花及待蒐集的花。")
         return
 
     # 既有：這個人已經擁有的統計
@@ -417,7 +417,19 @@ def page_person_stats(df, owner_cols):
         st.subheader("🌼 個人花名冊")
         kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
         owned_df_show = owned_df.copy()
+        
+        # ⭐ 加入該花的總擁有人數 owner_count & 全部擁有人 owners
+        extra_cols = []
+        for c in ["owner_count", "owners"]:
+            if c in items_with_counts.columns:
+                extra_cols.append(c)
 
+        if extra_cols:
+            # 用 index 對齊（items_with_counts 與 df 同 index，owned_df 也是用 df.loc[...] 來的）
+            extra = items_with_counts[extra_cols].reindex(owned_df_show.index)
+            for c in extra_cols:
+                owned_df_show[c] = extra[c].values
+        
         owned_df_show.columns = make_unique_columns(list(owned_df_show.columns))
 
         if kw2.strip():
@@ -568,7 +580,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     # 1️⃣ 選擇要比較的花農（多選）
     all_names = get_all_names(df, owner_cols)
     selected_people = st.multiselect(
-        "選擇要比較的花農（至少一位）",
+        "選擇要比較的花農(可用關鍵字搜尋)",
         options=all_names,
         default=[],
         key="flower_trade_people",
@@ -789,7 +801,7 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 # 左側功能切換（保留擴充性）
 PAGES = {
     "🌺 花名冊": lambda: page_raw_table(df),
-    "🌹 個人花圃": lambda: page_person_stats(df, owner_cols),
+    "🌹 個人花圃": lambda: page_person_stats(df, owner_cols, items_with_counts),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "🌼 名花榜": lambda: page_item_owner_counts(items_with_counts),
     # "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
