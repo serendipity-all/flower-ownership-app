@@ -37,7 +37,7 @@ def google_sheet_to_csv_url(sheet_url: str, gid: str = None) -> str:
 
 
 # @st.cache_data(show_spinner=False) 這行會造成無法取得最新資料
-@st.cache_data(show_spinner=False, ttl=60)  # ttl 單位是秒，這樣是60秒更新一次，如果希望一直更新，直接把這行block掉就好
+@st.cache_data(show_spinner=False, ttl=30)  # ttl 單位是秒，這樣是60秒更新一次，如果希望一直更新，直接把這行block掉就好
 def load_sheet(sheet_url: str):
     """
     讀取 Google Sheet，並回傳：
@@ -406,16 +406,16 @@ def page_person_stats(df, owner_cols, item_with_counts):
 
     # 只看「花名」的種類數（TYPE_COL 現在就是「花名」）
     c1, _ = st.columns(2)
-    c1.metric("擁有花種數（依花名）", type_count)
+    c1.metric("擁有花種數", type_count)
 
 
-    # 🔁 第二個 tab 改成「我需要的酷東西」
-    tab1, tab2 = st.tabs(["🌼 這個花農有...", "🌺 可以考慮再來點..."])
+    # 🔁 總共3個tab
+    tab1, tab2, tab3 = st.tabs(["🌼 " + person_name + " 的花名冊...", "🌺 等待下架的花...", "🛒 找誰買花"])
 
     # ---------- Tab 1：已擁有清單 ----------
     with tab1:
         st.subheader("🌼 個人花名冊")
-        kw2 = st.text_input("🔍 搜尋此人擁有物品", value="", key="kw2")
+        kw2 = st.text_input("🔍 搜尋此人擁有的花", value="", key="kw2")
         owned_df_show = owned_df.copy()
         
         # ⭐ 加入該花的總擁有人數 owner_count & 全部擁有人 owners
@@ -487,9 +487,9 @@ def page_person_stats(df, owner_cols, item_with_counts):
         )
 
         c3, _ = st.columns(2)
-        c3.metric("還沒拿到的花（花種數）", miss_type_count)
+        c3.metric("還沒拿到的花種數", miss_type_count)
 
-        kw3 = st.text_input("🔍 搜尋我還沒有拿到的花", value="", key="kw3")
+        kw3 = st.text_input("🔍 搜尋還沒有拿到的花", value="", key="kw3")
         missing_df_show = missing_df.copy()
 
         if kw3.strip():
@@ -523,6 +523,162 @@ def page_person_stats(df, owner_cols, item_with_counts):
                 use_container_width=True,
                 height=400
             )
+
+    # ---------- Tab 3：找誰買花 ----------
+    with tab3:
+        st.subheader("🛒 找誰買花(摸一把)")
+
+        # 切換顯示方式：依人名 / 依花名
+        mode = st.radio(
+            "顯示方式",
+            ["依人名", "依花名"],
+            horizontal=True,
+            key=f"buy_mode_{person_name}",
+        )
+
+        # ⭐ 關鍵字篩選器（依模式共用）
+        kw_buy = st.text_input(
+            "🔍 關鍵字篩選（可輸入花名或花農名稱的一部分）",
+            value="",
+            key=f"buy_kw_{person_name}",
+        ).strip()
+
+        # 準備「每朵花有哪些人擁有」的資訊
+        cols = list(df.columns)
+        start_idx = cols.index(OWNER_START_COL)
+        owner_cols_all = cols[start_idx:]
+        owner_df = df[owner_cols_all]
+
+        # 每列的唯一名單清單（已做格式整理）
+        unique_names_series = owner_df.apply(extract_unique_names_from_row, axis=1)
+
+        # 這個人有 / 沒有的花
+        has_person = unique_names_series.apply(lambda names: person_name in names)
+        not_has_person = ~has_person
+
+        if mode == "依人名":
+            # 1️⃣ 依人名：誰擁有我沒有的花？
+            st.caption("列出那些令 "+person_name+" 羨慕的花農以及他的小花們。")
+
+            # 所有花農（排除自己）
+            all_names = get_all_names(df, owner_cols)
+            others = [n for n in all_names if n != person_name]
+
+            rows = []
+            for other in others:
+                # 條件：other 有 & 我沒有
+                mask = unique_names_series.apply(
+                    lambda names, o=other: (o in names) and (person_name not in names)
+                )
+                idxs = unique_names_series.index[mask]
+
+                if len(idxs) == 0:
+                    continue
+
+                # 這個人擁有但我沒有的花名清單
+                flowers = (
+                    df.loc[idxs, TYPE_COL]
+                    .dropna()
+                    .astype(str)
+                    .tolist()
+                )
+
+                # 去重（保留順序）
+                seen = set()
+                uniq_flowers = []
+                for f in flowers:
+                    if f not in seen:
+                        seen.add(f)
+                        uniq_flowers.append(f)
+
+                rows.append(
+                    {
+                        "花農": other,
+                        "我沒有的花數量": len(uniq_flowers),
+                        "我沒有的花名稱": ", ".join(uniq_flowers),
+                    }
+                )
+
+            if not rows:
+                st.info("目前沒有任何人擁有你沒有的花。")
+            else:
+                df_people = pd.DataFrame(rows)
+
+                # ⭐ 套用關鍵字篩選（比對花農名稱 & 花名稱字串）
+                if kw_buy:
+                    mask_kw = (
+                        df_people["花農"].astype(str).str.contains(kw_buy, case=False, na=False)
+                        | df_people["我沒有的花名稱"].astype(str).str.contains(kw_buy, case=False, na=False)
+                    )
+                    df_people = df_people[mask_kw]
+
+                if df_people.empty:
+                    st.info("關鍵字篩選後沒有符合條件的結果。")
+                else:
+                    df_people = df_people.sort_values(
+                        by="我沒有的花數量",
+                        ascending=False,
+                        kind="mergesort",
+                    ).reset_index(drop=True)
+                    st.dataframe(df_people, use_container_width=True)
+
+        else:
+            # 2️⃣ 依花名：有哪些我沒有的花，誰有？
+            st.caption("列出 " + person_name + " 沒有的花，以及可以去找誰摸摸。")
+
+            idxs = unique_names_series.index[not_has_person]
+
+            if len(idxs) == 0:
+                st.info("你是花農霸主，只有別人找你買的份啦 🌸")
+            else:
+                rows = []
+                for idx in idxs:
+                    flower_name = df.at[idx, TYPE_COL]
+                    owners_here = unique_names_series[idx]
+
+                    # 小心 None / 空
+                    if owners_here is None:
+                        owners_here = []
+                    owners_here = [str(n) for n in owners_here]
+
+                    # 去重保留順序
+                    owners_seen = set()
+                    owners_ordered = []
+                    for o in owners_here:
+                        if o not in owners_seen:
+                            owners_seen.add(o)
+                            owners_ordered.append(o)
+
+                    rows.append(
+                        {
+                            "花名": str(flower_name),
+                            "持有花農數": len(owners_ordered),
+                            "花農名單": ", ".join(owners_ordered),
+                        }
+                    )
+
+                df_flowers = pd.DataFrame(rows)
+
+                # ⭐ 套用關鍵字篩選（比對花名 & 花農串）
+                if kw_buy:
+                    mask_kw = (
+                        df_flowers["花名"].astype(str).str.contains(kw_buy, case=False, na=False)
+                        | df_flowers["花農名單"].astype(str).str.contains(kw_buy, case=False, na=False)
+                    )
+                    df_flowers = df_flowers[mask_kw]
+
+                if df_flowers.empty:
+                    st.info("關鍵字篩選後沒有符合條件的結果。")
+                else:
+                    # 依「持有花農數」多到少排序，方便優先找人買
+                    df_flowers = df_flowers.sort_values(
+                        by="持有花農數",
+                        ascending=False,
+                        kind="mergesort",
+                    ).reset_index(drop=True)
+
+                    st.dataframe(df_flowers, use_container_width=True)
+
 
     # 保留原本的下載功能（下載「已擁有」的統計）
     buf = io.BytesIO()
