@@ -1057,7 +1057,7 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
 
 def page_task_garden_tool():
-    st.subheader("🧮 任務種花小工具")
+    st.subheader("🧮 任務計算機")
     st.caption("輸入任務需求，幫你顯示怎麼種最剛好。")
 
     # st.markdown("#### 1️⃣ 任務相關數字（暫定 num1 ~ num4，之後你可以改名稱）")
@@ -1175,7 +1175,7 @@ PAGES = {
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols, items_with_counts),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "🌼 名花榜": lambda: page_item_owner_counts(items_with_counts),
-    "🧮 任務種花小工具": lambda: page_task_garden_tool(),  # 👈 第五項
+    "🧮 任務計算機": lambda: page_task_garden_tool(),  # 👈 第五項
     # "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
