@@ -8,6 +8,7 @@ import re
 import io
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
 
 # =========================================================
@@ -19,6 +20,20 @@ DESC_COLS = ["品", "花名", "獲得方式", "備註"]  # 描述欄（原 A~D�
 OWNER_START_COL = "名字"                        # 擁有人欄第一欄
 TYPE_COL = "花名"                               # 種類欄（預設用花名當種類）
 # 若你要用「品」當種類，把上一行改成 TYPE_COL = "品"
+
+# 64 格實際在畫面上的排列（None 代表 X / 無效格）
+TASK_GRID_LAYOUT = [
+    [28, 24, 20, None, 16, 12,  8, None,  4,  0],
+    [29, 25, 21, None, 17, 13,  9, None,  5,  1],
+    [30, 26, 22, None, 18, 14, 10, None,  6,  2],
+    [31, 27, 23, None, 19, 15, 11, None,  7,  3],
+    [None, None, None, None, None, None, None, None, None, None],
+    [60, 56, 52, None, 48, 44, 40, None, 36, 32],
+    [61, 57, 53, None, 49, 45, 41, None, 37, 33],
+    [62, 58, 54, None, 50, 46, 42, None, 38, 34],
+    [63, 59, 55, None, 51, 47, 43, None, 39, 35],
+]
+
 # =========================================================
 
 
@@ -36,8 +51,8 @@ def google_sheet_to_csv_url(sheet_url: str, gid: str = None) -> str:
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 
 
-# @st.cache_data(show_spinner=False) 這行會造成無法取得最新資料
-@st.cache_data(show_spinner=False, ttl=30)  # ttl 單位是秒，這樣是60秒更新一次，如果希望一直更新，直接把這行block掉就好
+# @st.cache_data(show_spinner=False) 這行因為沒有設定時間，所以會造成無法取得最新資料
+@st.cache_data(show_spinner=False, ttl=600)  # ttl 單位是秒，這樣是600秒自動更新一次，如果不希望一直更新，直接把這行block掉就好
 def load_sheet(sheet_url: str):
     """
     讀取 Google Sheet，並回傳：
@@ -177,7 +192,7 @@ def compute_owner_counts(df, desc_cols, owner_start_col):
     out["item_desc"] = out[desc_cols].astype(str).agg(" | ".join, axis=1)
 
     # owners_norm 仍然保留原始清理版（給其他地方需要原格內容用）
-    owners_norm = owner_df.applymap(normalize_name)
+    owners_norm = owner_df.map(normalize_name)
 
     return out, owner_cols, owners_norm
 
@@ -258,6 +273,111 @@ def get_all_names(df, owner_cols):
     names = sorted(names_set)
     return names
 
+
+def render_harvest_grid(
+    used_cells: int,
+    view_mode: str = "俯視 (2D)",
+    elev: int | None = None,
+    azim: int | None = None,
+):
+    """
+    依 TASK_GRID_LAYOUT 畫出格子：
+    - 0 ~ used_cells 的格子亮綠燈
+    - 其他有效格白底
+    - X / None 的位置顯示成灰色
+    - 不顯示任何數字，只用顏色表示
+    view_mode: "俯視 (2D)" 或 "斜視 (3D)"
+    """
+    total_cells = 64
+    n = max(0, min(int(used_cells), total_cells - 1))
+
+    n_rows = len(TASK_GRID_LAYOUT)
+    n_cols = len(TASK_GRID_LAYOUT[0])
+
+    # ---------- 2D 俯視 ----------
+    if view_mode == "俯視 (2D)":
+        fig, ax = plt.subplots(figsize=(n_cols * 0.7, n_rows * 0.7))
+        ax.set_xlim(0, n_cols)
+        ax.set_ylim(0, n_rows)
+        ax.invert_yaxis()        # 讓第 0 列在最上面
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        for r, row in enumerate(TASK_GRID_LAYOUT):
+            for c, val in enumerate(row):
+                if val is None:          # X 的位置
+                    color_grid = "#f0f0f0"    # 淺灰色
+                    color_grid = 'none'       # 無色
+                    color_edge = 'none'
+                else:
+                    color_edge = 'black'
+                    v = int(val)
+                    if v <= n:
+                        color_grid = "lightgreen"  # 已使用：綠燈
+                    else:
+                        color_grid = "white"       # 未使用：白底
+
+                rect = plt.Rectangle(
+                    (c, r), 1, 1,
+                    facecolor=color_grid,
+                    edgecolor=color_edge,
+                    linewidth=1,
+                )
+                ax.add_patch(rect)
+
+        st.pyplot(fig)
+        return
+
+    # ---------- 3D 斜視 ----------
+    fig = plt.figure(figsize=(n_cols * 0.7, n_rows * 0.7))
+    ax = fig.add_subplot(111, projection="3d")
+
+    # 預設視角
+    if elev is None:
+        elev = 60
+    if azim is None:
+        azim = -60
+    ax.view_init(elev=elev, azim=azim)
+
+    ax.set_xlim(0, n_cols)
+    ax.set_ylim(n_rows, 0)   # 反轉 Y 讓上排在畫面上方
+    ax.set_zlim(0, 1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+    ax.set_box_aspect((n_cols, n_rows, 1))  # 比例好看一點
+
+    for r, row in enumerate(TASK_GRID_LAYOUT):
+        for c, val in enumerate(row):
+            if val is None:
+                # color_grid = "#f0f0f0"     # X 的位置：灰色小磚塊
+                color_grid = None
+                color_edge = None
+                color_alpha = 0
+                height = 0.01
+            else:
+                color_edge = 'grey'
+                color_alpha = 1
+                v = int(val)
+                if v <= n:
+                    color_grid = "lightgreen"   # 已使用：綠色小方塊
+                else:
+                    color_grid = "yellow"        # 未使用：白色平台
+                height = 0.1
+
+            # 畫一個 3D 小方塊 / 平台
+            ax.bar3d(
+                c, r, 0,          # x, y, z 底座
+                1, 1, height,     # dx, dy, dz
+                shade=True,
+                color=color_grid,
+                edgecolor=color_edge,
+                alpha=color_alpha,
+                linewidth=0.5,
+            )
+
+    ax.axis("off")
+    st.pyplot(fig)
 
 # ---------- 各頁面渲染函式 ----------
 def page_raw_table(df):
@@ -389,7 +509,7 @@ def page_item_owner_counts(items_with_counts):
 
 
 
-def page_person_stats(df, owner_cols, item_with_counts):
+def page_person_stats(df, owner_cols, items_with_counts):
     st.subheader("🌹 個人花圃")
 
     all_names = get_all_names(df, owner_cols)
@@ -408,16 +528,19 @@ def page_person_stats(df, owner_cols, item_with_counts):
     c1, _ = st.columns(2)
     c1.metric("擁有花種數", type_count)
 
-
     # 🔁 總共3個tab
-    tab1, tab2, tab3 = st.tabs(["🌼 " + person_name + " 的花名冊...", "🌺 等待下架的花...", "🛒 找誰買花"])
+    tab1, tab2, tab3 = st.tabs(
+        ["🌼 " + person_name + " 的花名冊...", "🌺 等待下架的花...", "🛒 找誰買花"]
+    )
 
     # ---------- Tab 1：已擁有清單 ----------
     with tab1:
         st.subheader("🌼 個人花名冊")
         kw2 = st.text_input("🔍 搜尋此人擁有的花", value="", key="kw2")
-        owned_df_show = owned_df.copy()
-        
+
+        # 先用一個工作用 DataFrame（保留 item_desc 給搜尋用）
+        owned_work = owned_df.copy()
+
         # ⭐ 加入該花的總擁有人數 owner_count & 全部擁有人 owners
         extra_cols = []
         for c in ["owner_count", "owners"]:
@@ -426,16 +549,22 @@ def page_person_stats(df, owner_cols, item_with_counts):
 
         if extra_cols:
             # 用 index 對齊（items_with_counts 與 df 同 index，owned_df 也是用 df.loc[...] 來的）
-            extra = items_with_counts[extra_cols].reindex(owned_df_show.index)
+            extra = items_with_counts[extra_cols].reindex(owned_work.index)
             for c in extra_cols:
-                owned_df_show[c] = extra[c].values
-        
-        owned_df_show.columns = make_unique_columns(list(owned_df_show.columns))
+                owned_work[c] = extra[c].values
 
+        # 🔍 用 item_desc 做關鍵字搜尋，但 item_desc 不會顯示在表格中
         if kw2.strip():
-            owned_df_show = owned_df_show[
-                owned_df_show["item_desc"].str.contains(kw2, case=False, na=False)
+            owned_work = owned_work[
+                owned_work["item_desc"].str.contains(kw2, case=False, na=False)
             ]
+
+        # 顯示用 DataFrame：把 item_desc 拿掉再顯示
+        owned_df_show = owned_work.copy()
+        if "item_desc" in owned_df_show.columns:
+            owned_df_show = owned_df_show.drop(columns=["item_desc"])
+
+        owned_df_show.columns = make_unique_columns(list(owned_df_show.columns))
 
         if owned_df_show.empty:
             st.info(f"{person_name} 沒有符合搜尋條件的物品。")
@@ -475,6 +604,17 @@ def page_person_stats(df, owner_cols, item_with_counts):
         missing_df = df.loc[~has_person, safe_cols].copy()
         missing_df["item_desc"] = missing_df[DESC_COLS].astype(str).agg(" | ".join, axis=1)
 
+        # ⭐ 加入 owner_count & owners（這朵花目前有幾個人、是誰有）
+        extra_cols = []
+        for c in ["owner_count", "owners"]:
+            if c in items_with_counts.columns:
+                extra_cols.append(c)
+
+        if extra_cols:
+            extra = items_with_counts[extra_cols].reindex(missing_df.index)
+            for c in extra_cols:
+                missing_df[c] = extra[c].values
+
         miss_total = len(missing_df)
         type_data = missing_df[TYPE_COL]
         if isinstance(type_data, pd.DataFrame):
@@ -490,20 +630,28 @@ def page_person_stats(df, owner_cols, item_with_counts):
         c3.metric("還沒拿到的花種數", miss_type_count)
 
         kw3 = st.text_input("🔍 搜尋還沒有拿到的花", value="", key="kw3")
-        missing_df_show = missing_df.copy()
 
+        # 一樣先用工作 DataFrame 搜尋，最後再把 item_desc 拿掉
+        missing_work = missing_df.copy()
         if kw3.strip():
-            missing_df_show = missing_df_show[
-                missing_df_show["item_desc"].str.contains(kw3, case=False, na=False)
+            missing_work = missing_work[
+                missing_work["item_desc"].str.contains(kw3, case=False, na=False)
             ]
 
-        if missing_df_show.empty:
+        if missing_work.empty:
             st.info("目前沒有符合條件的『還沒拿到的花』，或是被搜尋條件排掉了。")
         else:
+            missing_df_show = missing_work.copy()
+            if "item_desc" in missing_df_show.columns:
+                missing_df_show = missing_df_show.drop(columns=["item_desc"])
+
+            sort_cols_candidates = list(missing_df_show.columns)
+            default_sort_idx = sort_cols_candidates.index("花名") if "花名" in sort_cols_candidates else 0
+
             sort_col_3 = st.selectbox(
                 "未取得清單排序欄位",
-                options=safe_cols,
-                index=safe_cols.index("花名") if "花名" in safe_cols else 0,
+                options=sort_cols_candidates,
+                index=default_sort_idx,
                 key="missing_sort",
             )
             asc_3 = st.toggle(
@@ -558,7 +706,7 @@ def page_person_stats(df, owner_cols, item_with_counts):
 
         if mode == "依人名":
             # 1️⃣ 依人名：誰擁有我沒有的花？
-            st.caption("列出那些令 "+person_name+" 羨慕的花農以及他的小花們。")
+            st.caption("列出那些令 " + person_name + " 羨慕的花農以及他的小花們。")
 
             # 所有花農（排除自己）
             all_names = get_all_names(df, owner_cols)
@@ -679,7 +827,6 @@ def page_person_stats(df, owner_cols, item_with_counts):
 
                     st.dataframe(df_flowers, use_container_width=True)
 
-
     # 保留原本的下載功能（下載「已擁有」的統計）
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -691,6 +838,7 @@ def page_person_stats(df, owner_cols, item_with_counts):
         file_name=f"{person_name}_stats.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
 
 def page_multi_compare(df, owner_cols):
@@ -908,6 +1056,73 @@ def page_pair_diff(df, items_with_counts, owner_cols):
             )
 
 
+def page_task_garden_tool():
+    st.subheader("🧮 任務種花小工具")
+    st.caption("輸入任務需求，幫你顯示怎麼種最剛好。")
+
+    # st.markdown("#### 1️⃣ 任務相關數字（暫定 num1 ~ num4，之後你可以改名稱）")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        num1_grid = st.number_input("我的花園格子數", min_value=1, max_value=64, step=1, value=1)
+    with c2:
+        num2_need = st.number_input("目標收成數量", min_value=1, max_value=999999, step=1, value=1)
+    with c3:
+        num3_round = st.number_input("鮮花收穫次數", min_value=1, max_value=999999, step=1, value=1)
+    with c4:    
+        num4_quantity = st.number_input("單次收穫數量", min_value=1, max_value=999999, step=1, value=1)
+
+    # st.markdown("#### 2️⃣ 按下按鈕開始計算適合使用的格數")
+
+    # if st.button("▶️ 開始計算", type="primary"):
+    # 🔧 這裡是你之後要寫的「運算邏輯」區域
+    # -------------------------------------------------
+    # TODO: 請用 num1, num2, num3, num4 計算出一個 0~63 的整數 used_cells
+    num_need_cells, remainder = divmod(num2_need, num3_round*num4_quantity)
+    if remainder != 0:
+        num_need_cells += 1
+    # 限制在可用格數內
+    need_round, used_cells = divmod(int(num_need_cells), num1_grid)
+    if used_cells == 0:
+        used_cells = num1_grid
+    else:
+        need_round += 1
+    used_cells -= 1
+    # -------------------------------------------------
+    st.session_state["task_used_cells"] = used_cells
+
+    # st.markdown("#### 3️⃣ 格子視覺化（綠色代表已使用）")
+
+    if "task_used_cells" in st.session_state:
+        used_cells = st.session_state["task_used_cells"]
+        st.caption(f"總共需種植 **{num_need_cells}** 格 => 實際需要 **{need_round}** 輪，最後一輪種植 **{used_cells+1}** 格")
+        
+        adjust_mode = 'auto'
+        
+        if adjust_mode == 'auto':
+            elev = 30
+            azim = -60
+            view_mode = '斜視 (3D)'
+        
+        else:    
+            # 視角選擇 ＋ 滑桿
+            view_mode = st.radio(
+                "視角",
+                ["俯視 (2D)", "斜視 (3D)"],
+                horizontal=True,
+                key="task_view_mode",
+            )
+            elev = azim = None
+            if view_mode == "斜視 (3D)":
+                c1, c2 = st.columns(2)
+                with c1:
+                    elev = st.slider("視角高度（elev）", min_value=10, max_value=90, value=30)
+                with c2:
+                    azim = st.slider("水平旋轉角度（azim）", min_value=-180, max_value=180, value=-60)
+
+        render_harvest_grid(used_cells, view_mode=view_mode, elev=elev, azim=azim)
+    else:
+        st.info("請先輸入數字，然後按下 **開始計算**。")
+
 
 
 # ---------- 主程式 ----------
@@ -960,15 +1175,23 @@ PAGES = {
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols, items_with_counts),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "🌼 名花榜": lambda: page_item_owner_counts(items_with_counts),
+    "🧮 任務種花小工具": lambda: page_task_garden_tool(),  # 👈 第五項
     # "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
 with st.sidebar:
     st.header("🌷 調查項目")
+
+    # 🔄 資料更新按鈕：清掉 cache，並立刻 rerun 讓上面的 load_sheet 重新抓資料
+    if st.button("🔄 資料更新", help="重新從 Google Sheet 抓最新資料"):
+        load_sheet.clear()          # 把 st.cache_data 的快取清掉
+        st.rerun()     # 立刻重新執行整個 app
+
     page_label = st.radio(
-        "",
+        "選擇功能頁面",
         options=list(PAGES.keys()),
         index=0,
+        label_visibility="collapsed",  # label 還是在，但畫面上隱藏，避免空字串警告
     )
 
 PAGES[page_label]()
