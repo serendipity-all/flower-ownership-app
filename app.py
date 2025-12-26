@@ -912,6 +912,8 @@ def page_pair_diff(df, items_with_counts, owner_cols):
     )
 
     # 3️⃣ 個人擁有花數 + 獨有花統計表
+    person_unique_flowers = {}  # 🔹 用來記錄每個人的獨有花清單
+
     summary_rows = []
     for person in selected_people:
         col_series = bool_mat[person]          # 這個人在每朵花上的 True/False
@@ -946,7 +948,8 @@ def page_pair_diff(df, items_with_counts, owner_cols):
             if f not in seen:
                 seen.add(f)
                 unique_flowers_ordered.append(f)
-
+        # 🔹 把這個人的獨有花記起來（之後轉成一朵一格用）
+        person_unique_flowers[person] = unique_flowers_ordered
         summary_rows.append(
             {
                 "花農": person,
@@ -972,12 +975,50 @@ def page_pair_diff(df, items_with_counts, owner_cols):
 
     # -------- Tab 0：花數總表 --------
     with tab_summary:
-        st.markdown("### 🌸 個人擁有花數總表")
-        st.dataframe(
-            summary_df,
-            use_container_width=True,
-            height=min(400, 40 + 30 * len(summary_df)),
-        )
+        st.markdown("### 🌸 個人擁有花數總表（每人欄位＋獨有花往下排列）")
+    
+        if summary_df.empty:
+            st.info("目前沒有任何已選取的花農。")
+        else:
+            data_by_person = {}
+    
+            # 先把每個人的欄內容組好：上兩格是數字，下面連續列出獨有花
+            for person in selected_people:
+                row = summary_df[summary_df["花農"] == person].iloc[0]
+    
+                col_values = []
+                # 前兩格：數字指標
+                col_values.append(row["擁有花數"])
+                col_values.append(row["獨有花數量"])
+    
+                # 再往下：這個人的所有獨有花，依順序連續列出
+                for f in person_unique_flowers.get(person, []):
+                    col_values.append(f)
+    
+                data_by_person[person] = col_values
+    
+            # 對齊成為同一高度的表格（短的補空字串在最下面）
+            max_len = max(len(v) for v in data_by_person.values())
+            for person, values in data_by_person.items():
+                if len(values) < max_len:
+                    values.extend([""] * (max_len - len(values)))
+                    data_by_person[person] = values
+    
+            # 建 DataFrame：欄 = 人，列 = [擁有花數, 獨有花數量, 獨有花1, 獨有花2, ...]
+            transposed_df = pd.DataFrame(data_by_person)
+    
+            index_labels = ["擁有花數", "獨有花數量"]
+            if max_len > 2:
+                index_labels += [f"獨有花{i}" for i in range(1, max_len - 1)]
+    
+            transposed_df.index = index_labels
+    
+            st.dataframe(
+                transposed_df,
+                use_container_width=True,
+                height=500,
+            )
+
 
     # -------- Tab 1：目前有的花 × 人員矩陣（只顯示「部分人擁有」的花） --------
     with tab_matrix:
