@@ -1211,12 +1211,12 @@ items_with_counts, owner_cols, owners_norm = compute_owner_counts(
 )
 
 # 左側功能切換（保留擴充性）
-PAGES = {
-    "🌺 花名冊": lambda: page_raw_table(df),
+PAGES = {    
     "🌹 個人花圃": lambda: page_person_stats(df, owner_cols, items_with_counts),
     "💐 花貿服務": lambda: page_pair_diff(df, items_with_counts, owner_cols),
     "🌼 名花榜": lambda: page_item_owner_counts(items_with_counts),
     "🧮 任務計算機": lambda: page_task_garden_tool(),  # 👈 第五項
+    "🌺 花名冊": lambda: page_raw_table(df),
     # "🌻 花農排行榜": lambda: page_multi_compare(df, owner_cols),
 }
 
